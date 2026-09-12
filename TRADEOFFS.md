@@ -1,15 +1,16 @@
 # Trade-offs cheat sheet
 
-Every agent and platform decision buys you something and charges you
-something else. This page is the one-screen version of choices the two books
-spend whole chapters on. Agents track = *AI Agents in Action* 2e. Platform
-track = *Designing AI Systems* MEAP.
+Every agent, platform, and classical-ML decision buys you something and
+charges you something else. This page is the one-screen version of choices
+the three books spend whole chapters on. Agents track = *AI Agents in
+Action* 2e. Platform track = *Designing AI Systems* MEAP. ML track =
+*Hands-On Machine Learning* 2e.
 
 Nothing here is a rule you should apply without measuring. That is itself
 the first production lesson.
 
-When a row lists both tracks, read **both** folders; do not fuse them into
-one design note. Details: [`INDEX.md`](./INDEX.md).
+When a row lists more than one track, read **each** folder; do not fuse
+them into one design note. Details: [`INDEX.md`](./INDEX.md).
 
 ---
 
@@ -25,6 +26,8 @@ one design note. Details: [`INDEX.md`](./INDEX.md).
    → [P7](./platform/7-observability/), [A7](./agents/7-evaluation-and-feedback/)
 4. **Change one thing, then measure again.** Prompt, model, retrieval, and
    tools moved in the same deploy give you one data point and no attribution.
+   On the ML track the same rule is "do not peek at the test set, then
+   retune." → [M2](./ml/2-end-to-end-project/)
 
 ---
 
@@ -188,3 +191,96 @@ token-budget algorithms. Knowledge that is **documents**, not **chat**, is
 
 The books do not require you to rewrite Bedrock. They require you to **see
 the services** even if a vendor implements them.
+
+---
+
+## Train a model vs call a model vs wrap a loop (M1, A1, P3)
+
+These three are the most common collision in this workshop. They share
+vocabulary and do not share a stack.
+
+| Job | You gain | You pay |
+|---|---|---|
+| Fit sklearn / Keras weights on *your* table or pixels (ML track) | A model that knows *your* distribution | Labels, leakage discipline, retraining, serving the graph |
+| Call a provider LLM (Platform Model Service / Agents runtime) | No training job; frontier quality | Tokens, routing, eval of generations, you do not own the weights |
+| Run an agent loop around that call (Agents track) | Multi-step tools and plans | Runaway cost, tool blast radius, traces |
+
+**See also, do not merge:** [M1](./ml/1-ml-landscape/) is "the machine
+changes when the data changes." [A1](./agents/1-rise-of-ai-agents/) is
+"the runtime chooses the next tool." [P3](./platform/3-model-service/) is
+"one adapter so every workflow does not grow its own SDK."
+
+## Batch vs online learning (M1) vs session memory (P4)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| Batch training (full dataset, then freeze) | Simple; reproducible snapshots | Stale the day the distribution moves |
+| Online / incremental learning | Adapts as examples arrive | Catastrophic forgetting; harder eval; poisoning |
+| Session memory (chat transcript) | The *conversation* is available to the next LLM call | Not a trained weight update; hits the context window |
+
+Online learning in Géron is **updating parameters**. Session Service is
+**storing tokens**. Do not call a Redis chat log "online learning."
+
+## Hold-out metrics vs judges vs platform scores (M2–M3, A7, P7)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| Held-out test set + CV (sklearn) | Unbiased estimate if the split is honest | One number; silent if production drift |
+| Precision/recall/ROC on labels | You can pick an operating point | Needs labels; accuracy on imbalanced data will lie |
+| LLM-as-judge / critic agent | Scores generations that have no gold label | The judge can be wrong; cost |
+| Platform traces + A/B | Causal claims on live traffic | Experiment hygiene; not a confusion matrix |
+
+A confusion matrix does not tell you whether the *agent* refunded the
+wrong order. A Phoenix trace does not tell you whether the *classifier*
+is calibrated. Read both folders if you have both jobs.
+
+## Embeddings as features vs embeddings as retrieval (M13, M16, A6, P5)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| Embedding table inside the net (Géron) | The task loss trains the vectors | Tied to that model; not a document index |
+| Frozen pretrained word vectors (2019-shaped) | Transfer on small text sets | Domain mismatch; no retrieval loop |
+| Retrieval embeddings + vector index (Agents/Platform) | Private docs enter the prompt | Chunking, index isolation, miss/latency |
+
+Same word. The ML folder trains (or loads) a lookup. The Data Service
+indexes *chunks* so an agent can retrieve them. Do not store Géron's
+`Embedding` layer in pgvector and call it RAG.
+
+## Attention you train vs an LLM you sample (M16, A2)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| Train a Transformer (or even a char-RNN) | You own the task and the weights | Data, GPUs, 2019 NLP is not 2026 chat |
+| Prompt a hosted LLM | No training loop | You do not own the weights; persona and tools are the lever |
+
+M16 is how attention *works*. A2 is how you *steer* a model that already
+has it. Keep the notes in their folders.
+
+## RL agent vs LLM agent (M18, A1, A9)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| RL (reward, MDP, Q-learning, policy gradient) | Behaviour that maximises a scalar you defined | Credit assignment, exploration, sample hunger |
+| LLM agent (SPAL, tools, termination gate) | Language, tools, plans without a gym | Not a Bellman update; eval is traces and judges |
+
+Gym + DQN is not MCP + ReAct. The word "agent" is the overlap. The
+algorithms are not.
+
+## Feature scaling and pipelines (M2) vs ingestion (P5)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| sklearn `Pipeline` (impute → encode → scale → estimate) | Fit only on train; no leakage | Tabular; not a PDF corpus |
+| Data Service ingestion (extract → chunk → embed → index) | Documents become searchable | Different grain; different failure (miss, not MSE) |
+
+## Serving weights vs a Model Service vs deploying an agent (M19, P3, A8)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| TensorFlow Serving / a frozen SavedModel | Low-latency *your* net | You operate GPUs and versions of *that* graph |
+| Platform Model Service | One gateway to many *providers* | You still do not train those providers |
+| Agent deploy (API, Compose, edge, events) | The *loop* is the product | Tools, secrets, prompt injection, budgets |
+
+TF Serving is how Géron ships chapter-14 weights. The Model Service is
+how the platform ships "call whoever." Agent deploy is how Lanham ships
+the loop. Pick the folder that matches the artifact you are shipping.

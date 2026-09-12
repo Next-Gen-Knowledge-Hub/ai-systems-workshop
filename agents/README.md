@@ -3,10 +3,11 @@
 Companion notes for **Micheal Lanham, *AI Agents in Action*, 2nd edition**
 (Manning, 2026). This track stays on **how an agent is put together**.
 
-The other book in this workshop — *Designing AI Systems* — lives in
-[`../platform/`](../platform/). Shared words (MCP, memory, RAG, eval) are
-**not** merged here. Use [`../INDEX.md`](../INDEX.md) when you need the other
-angle.
+The other books in this workshop — *Designing AI Systems* and *Hands-On
+Machine Learning* — live in [`../platform/`](../platform/) and
+[`../ml/`](../ml/). Shared words (MCP, memory, RAG, eval, embedding,
+deploy) are **not** merged here. Use [`../INDEX.md`](../INDEX.md) when you
+need the other angle.
 
 | Folder | AIA ch. |
 |---|---|
