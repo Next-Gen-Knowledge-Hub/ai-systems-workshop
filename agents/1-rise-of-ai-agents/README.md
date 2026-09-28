@@ -4,15 +4,11 @@ Companion notes for **Chapter 1** of *AI Agents in Action* (2nd edition,
 Micheal Lanham; Manning, 2026).
 
 This chapter is the map for the whole Agents track. By themselves, LLM apps
-generate text. Agents **perceive, decide, and act** toward a goal — book the
-flight, not list the flights. Skip this chapter and you will do what thousands
-of demos have done: call a chat API, sprinkle a tool or two, and then be
-surprised when the thing loops, spends, or cannot explain *which layer*
-failed.
-
-The Platform track is a different book. If you need "why every team rebuilt
-session storage," that is [platform ch. 1](../../platform/1-why-a-platform/).
-This folder stays on **what an agent is**.
+generate text. Agents perceive, decide, and act toward a goal — book the
+flight, list the flights only as a step along the way. Skip this chapter and
+you will do what thousands of demos have done: call a chat API, sprinkle a
+tool or two, and then be surprised when the thing loops, spends, or cannot
+explain which layer failed.
 
 ## The mental model
 
@@ -35,14 +31,15 @@ design reviews go nowhere.
                   (or a budget / guardrail stops it)
 ```
 
-The one sentence to remember a year from now: **an agent is software with
-agency** — it can choose tools and next steps without you clicking each one —
-and that agency is engineered as **five layers**, not as a bigger prompt.
+The one sentence to remember a year from now: an agent is software with
+agency — it can choose tools and next steps without you clicking each one —
+and that agency is engineered as five layers. A bigger prompt is one piece of
+layer 1, nothing more.
 
-Two consequences fall straight out of that diagram. First, ChatGPT-as-you-
-use-it-today is mostly an *assistant*; your production bot that files tickets
-overnight is trying to be an *agent*. Second, "we added function calling"
-does not make an agent. Function calling without a loop, memory policy, and
+Two consequences fall straight out of that diagram. First, ChatGPT as you use
+it today is mostly an assistant; your production bot that files tickets
+overnight is trying to be an agent. Second, adding function calling does not
+by itself make an agent. Function calling without a loop, a memory policy, and
 evaluation is still an assistant with extra JSON.
 
 ## Defining agents and agentic thinking
@@ -56,28 +53,29 @@ workshop, keep the engineering definition:
 achieve a goal.**
 
 *Agentic* is the adjective for systems that actually run that loop with some
-autonomy. Philosophical debates about "intention" can wait. If it cannot
-choose an action without a new human prompt per step, it is not agentic
-enough to need the rest of this book.
+autonomy. Philosophical debates about "intention" can wait. If the system
+cannot choose an action without a new human prompt per step, it is not
+agentic enough to need the rest of this book.
 
 ### Agent, assistant, and LLM patterns
 
-**Problem** — Teams say "we shipped an agent" when they shipped a system
-prompt.
+Teams often say "we shipped an agent" when they shipped a system prompt. Name
+the pattern you actually run.
 
-**Solution** — Name the pattern you actually run.
+A **direct LLM** is you talking to the model. Early ChatGPT was this. Fine
+for drafting. Useless for "update Jira and email the customer," because nothing
+in the loop can change the world.
 
-- **Direct LLM:** you talk to the model. Early ChatGPT was this. Fine for
-  drafting. Useless for "update Jira and email the customer."
-- **Assistant:** the model may call tools (search, images, code). A person
-  still ratifies the important steps, or the tool surface is tiny and
-  reversible.
-- **Agent:** the model is wrapped in a loop that can chain tools, revise the
-  plan from observations, and stop when a termination condition fires.
+An **assistant** may call tools (search, images, code). A person still
+ratifies the important steps, or the tool surface is tiny and reversible.
+Assistants often write a better prompt for another model (image, search). That
+is still one task at a time, with a human as the scheduler for the next goal.
 
-Assistants often *write a better prompt for another model* (image, search).
-That is still not a multi-step goal loop. When you draw your system, label
-the box honestly.
+An **agent** wraps the model in a loop that can chain tools, revise the plan
+from observations, and stop when a termination condition fires. When you draw
+your system, label the box honestly. The label decides which failure modes you
+are on the hook for: a chatty assistant wastes tokens; a looping agent wastes
+money and may mutate production.
 
 ### Sense-plan-act-learn
 
@@ -91,12 +89,14 @@ Agency, internally, is a four-beat loop. The book abbreviates it as
 
 A goal such as "travel to Calgary" is not one tool. It is search flights,
 book flights, hotels, transport — each a tool, each an observation that
-changes the plan. **Tasks should be sized to tools.** If a "task" cannot be
+changes the plan. Tasks should be sized to tools. If a "task" cannot be
 expressed as a tool call plus a check, it is still a wish.
 
-The inner SPAL loop is **layer 1** of the agentic loop in
-[ch. 9](../9-agentic-loop/). Do not skip ahead until this four-beat is
-boring.
+Walk a goal you care about through those four beats until the mapping is
+boring. Sense is the inputs. Plan is the decomposition. Act is each call.
+Learn is where a sold-out flight forces a replan. That four-beat rhythm is
+the inner core of every agentic loop you will build later; everything else in
+this chapter is scaffolding around it.
 
 ### Agents act with tools
 
@@ -112,36 +112,40 @@ call; *your* runtime runs the function and feeds the result back.
 ```
 
 Tools wrap APIs, databases, files, browsers. They fail: timeouts, 429s,
-unexpected payloads. **Failure handling is part of the agent**, not an
-afterthought in the HTTP client. A demo that only shows the happy JSON path
-is not an agent you can page.
+unexpected payloads. Failure handling is part of the agent. A demo that only
+shows the happy JSON path is not an agent you can page. When a booking API
+returns 429, the learn beat has to decide whether to wait, switch carriers, or
+stop and tell the user — and that decision lives in your loop, not only in the
+HTTP client's retry policy.
 
-You will implement tools two ways in this track: framework decorators
-([ch. 2](../2-llms-prompting-agents/)) and **MCP servers**
-([ch. 3](../3-mcp/)). Same idea, different packaging.
+You will implement tools two ways in this track: framework decorators that
+build a schema from a Python function, and MCP servers that expose the same
+kind of schema over a standard protocol. Same idea, different packaging. The
+schema-and-observation contract stays identical either way.
 
 ## Introducing the Model Context Protocol
 
-MCP (Anthropic, 2024) is an open JSON-RPC 2.0 convention so that **any host**
-(Claude Desktop, your agent runtime, an IDE) can talk to **any server** that
+MCP (Anthropic, 2024) is an open JSON-RPC 2.0 convention so that any host
+(Claude Desktop, your agent runtime, an IDE) can talk to any server that
 exposes tools, resources, and prompts.
 
-**Problem** — Every model vendor and every SaaS grew a private plugin format.
-N agents times M tools is a combinatorial tax.
+Before a shared protocol, every model vendor and every SaaS grew a private
+plugin format. N agents times M tools is a combinatorial tax: every new host
+pays M integrations, every new service pays N wrappers. MCP wraps the tool
+once as a server; hosts speak one client. The tax becomes addition.
 
-**Solution** — Wrap the tool once as an MCP server. Hosts speak one protocol.
-
-This chapter only *introduces* MCP so the five layers have a realistic socket.
-The Agents-track deep dive is [ch. 3](../3-mcp/). How a **platform** uses MCP
-as a shared integration bus — registry, credentials, what the protocol does
-*not* cover — is [platform ch. 6](../../platform/6-tools-and-guardrails/).
-Do not merge those two chapters.
+This chapter only introduces MCP so the five layers have a realistic socket.
+A protocol solves discoverability and a shared call shape. It does not, by
+itself, decide who may call a tool, where the API key lives, whether the call
+was a good idea, or how teams version capabilities across an org. Those gaps
+still need product and platform work; the socket just makes the capability
+portable.
 
 ## Five functional layers
 
 Capability is not "add more prompt." It is five layers you can add, thin, or
-skip on purpose. They are **not** a waterfall. Reasoning consults memory
-while tools run; evaluation can sit on every hop.
+skip on purpose. They are not a waterfall. Reasoning consults memory while
+tools run; evaluation can sit on every hop.
 
 ```
   +--------------------------------------------------------------+
@@ -157,10 +161,12 @@ while tools run; evaluation can sit on every hop.
   +--------------------------------------------------------------+
 ```
 
-Core agents almost always need 1–3. Layers 4–5 are how you stop hallucinating
-policy and shipping untested loops. [Chapter 11](../11-field-tips/) is tips
-**by these layers**. If a production incident cannot be tagged with a layer,
-you do not yet have this map in your bones.
+Core agents almost always need layers 1–3. Layers 4–5 are how you stop
+hallucinating policy and shipping untested loops. If a production incident
+cannot be tagged with a layer, you do not yet have this map in your bones.
+"The bot is witty but refunds the wrong order" is a layer question: persona
+may explain the wit; tools, reasoning, knowledge, or evaluation explain the
+wrong refund — and you inspect the layer that owns the broken behavior first.
 
 ### Persona
 
@@ -169,10 +175,11 @@ researcher), expertise, tone, operating constraints. It can be hand-written,
 drafted by another model, or even searched (research has used evolutionary
 tricks to mutate personas against a metric).
 
-Everything you wish the agent "just knew" about *how to behave* and that is
-not a retrieved fact belongs here. Facts about *your company* belong in
+Everything you wish the agent "just knew" about *how to behave*, and that is
+not a retrieved fact, belongs here. Facts about *your company* belong in
 layer 4. Mixing them is how a prompt becomes a dumping ground and a
-compliance nightmare.
+compliance nightmare: style and refusal rules drift next to SKUs and last
+week's incident notes, and nobody can say what is policy versus what is data.
 
 ### Tools and actions
 
@@ -180,15 +187,17 @@ Tools are not only "book the flight." The book splits them by **what they do
 to state**:
 
 - **Context retrieval** — read-only: search, files, APIs. Ground the next
-  thought. Do not confuse with long-term memory writes.
+  thought. These do not write long-term memory by themselves.
 - **Task completion** — change the world: send, book, mutate a ticket.
 - **Knowledge/memory tools** — read and write the agent's own stores.
-- **Reasoning/planning tools** — e.g. a sequential-thinking server
-  ([ch. 5](../5-reasoning-and-planning/)).
-- **Evaluation tools** — score, ground, critique ([ch. 7](../7-evaluation-and-feedback/)).
+- **Reasoning/planning tools** — for example a sequential-thinking server that
+  gives the agent an inspectable scratchpad.
+- **Evaluation tools** — score, ground, critique an artifact.
 
 If you cannot say which bucket a tool is in, you cannot write a guardrail for
-it later.
+it later. A read-only search tool and a send-mail tool may share a schema
+shape; they do not share a blast radius. Classification is how you decide
+which calls need human approval, budgets, or dry-run modes.
 
 ### Reasoning and planning
 
@@ -202,46 +211,53 @@ add **structured** reasoning (CoT, ReAct, trees, Reflexion) when:
 - you need an auditable trace,
 - the domain is outside the model's comfort zone.
 
-Details and when-to-choose: [ch. 5](../5-reasoning-and-planning/).
+Model-native reasoning on a five-minute FAQ lookup is usually enough. The
+same model booking a refund across three systems needs an explicit plan and
+observations you can audit. Use the criteria above as a checklist against a
+system you know: if several boxes light up, structured reasoning earns its
+token cost; if none do, a sharper persona and fewer tools usually beat a
+full ReAct scaffold.
 
 ### Knowledge and memory
 
-Context is finite. Knowledge/memory is how you **annotate the next prompt
-with the right tokens** instead of stuffing everything.
+Context is finite. Knowledge and memory are how you annotate the next prompt
+with the right tokens instead of stuffing everything.
 
-- **Knowledge** — usually documents and indexes (RAG). The agent's "library."
-- **Memory** — usually interaction: this session (short-term, in the window)
-  and across sessions (long-term, retrieved).
+**Knowledge** is usually documents and indexes (RAG) — the agent's library.
+**Memory** is usually interaction: this session (short-term, in the window)
+and across sessions (long-term, retrieved).
 
 Stores range from a list, to SQL/JSON, to graphs, to dense vectors. Hybrid
 systems are normal. Conversational memory is the one you will ship first and
 the one that will blow the token budget first.
 
-How an *agent* wires RAG and MCP memory: [ch. 6](../6-memory-and-rag/). How
-a *platform* persists sessions and org indexes:
-[platform ch. 4](../../platform/4-session-service/) and
-[platform ch. 5](../../platform/5-data-service/). Same words, different
-jobs — stay in this folder for the agent-shaped version.
+Short-term memory lives in the context window. Long-term memory is retrieved
+into that window when needed. Treating a PDF knowledge base as "memory" mixes
+the library with the conversation: you either dump the whole PDF every turn
+(token blow-up) or forget that knowledge needs a retrieval step with its own
+failure modes. Keep the words separate even when the same vector store holds
+both kinds of embedding.
 
 ### Evaluation and feedback
 
-Two timescales:
+Two timescales share this layer.
 
-- **In the loop (learn):** after a tool result, decide whether the plan still
-  holds. This is SPAL's learn beat.
-- **Around the loop:** LLM-as-judge, rubrics, grounding ("did this claim
-  appear in retrieved docs?"), critic agents, traces in Phoenix.
+**In the loop (learn):** after a tool result, decide whether the plan still
+holds. This is SPAL's learn beat — continue, replan, or stop.
+
+**Around the loop:** LLM-as-judge, rubrics, grounding ("did this claim appear
+in retrieved docs?"), critic agents, traces in tools such as Phoenix.
 
 Without this layer you cannot tell a prompt regression from a model
-provider's bad Thursday. Deep dive: [ch. 7](../7-evaluation-and-feedback/).
-Platform-shaped eval and A/B:
-[platform ch. 7](../../platform/7-observability/).
+provider's bad Thursday. Evaluation is how you pin a persona change, a tool
+schema tweak, or a sampling knob and see which one moved the score. Skip it
+and every incident becomes folklore about "the model got worse."
 
 ## Multi-agent systems
 
 A single agent hits walls: too many tools in one persona, no parallelism, a
 context window that cannot hold the whole problem, or a domain that is
-*inherently* multi-party (markets, debate, simulation).
+inherently multi-party (markets, debate, simulation).
 
 Reasons to split, which are not the same reason:
 
@@ -252,8 +268,10 @@ Reasons to split, which are not the same reason:
 | Context | Each agent holds a slice |
 | Inherent multi-agent | The problem *is* several roles |
 
-Three assembly patterns. Pick one per product; mixing them without a diagram
-is how handoffs go missing.
+Pick a reason, then pick an assembly pattern. Mixing "we needed parallelism"
+with "so we built a debating team" buys coordination cost you did not ask for.
+Three assembly patterns cover most products. Pick one per product; mixing them
+without a diagram is how handoffs go missing.
 
 ### Flow (assembly line)
 
@@ -262,37 +280,46 @@ Planner → researcher → writer, in order. Coordination options:
 - **Shared thread** — everyone sees the full chat. Context explodes; later
   agents drown in early chatter.
 - **Blackboard** — named slots for artifacts. More structure, more design.
-- **Message passing** — explicit payloads between stages. Testable, easy to
+- **Message passing** — explicit payloads between stages. Testable; easy to
   drop fields by accident.
 
 Flows are easy to test stage-by-stage and brittle when the first stage's plan
-is wrong. More in [ch. 4](../4-multi-agent-systems/).
+is wrong. Shared thread fails by drowning the writer in research chatter.
+Message passing fails by omitting a field the writer needed. Blackboard fails
+when slots go stale after a replan. Those are the production stories under the
+cute diagram.
 
 ### Orchestration (hub-and-spoke)
 
-A hub talks to the user and treats specialists as tools. You keep **one
-mouth**. The hub's context and latency become the bottleneck. This is the
-natural upgrade when a single assistant's tool list got ridiculous.
+A hub talks to the user and treats specialists as tools. You keep one mouth.
+The hub's context and latency become the bottleneck. This is the natural
+upgrade when a single assistant's tool list got ridiculous and you still want
+one conversation with the human. Summaries into the hub lie; structured worker
+outputs keep control honest.
 
 ### Collaboration (teams)
 
-Peers talk to each other (optionally with a manager/user-proxy). QA can
-critique code while product checks requirements. You gain debate and lose
-a single-threaded story. Traces get harder; you will want
-[ch. 7](../7-evaluation-and-feedback/) sooner.
+Peers talk to each other (optionally with a manager or user-proxy). QA can
+critique code while product checks requirements. You gain debate and lose a
+single-threaded story. Traces get harder; you will want evaluation sooner,
+because "who said what to whom" is no longer one span.
 
-Platform workflows that *host* these graphs as HTTP services:
-[platform ch. 8](../../platform/8-workflow-service/). Mention only.
+Specialization vs parallelism vs context slicing is one axis. Flow vs hub vs
+team is another. A combination that is a mistake: you needed a shorter tool
+list (specialization / context), and you built a peer debate team (team shape)
+with a shared thread. You paid for coordination and context explosion when a
+three-stage flow with typed messages would have been enough.
 
 ## Next steps in this book
 
 The first half of Lanham is the five layers, with MCP and multi-agent
 introduced early so later chapters are not toys. Then: deployment, the
-three-layer agentic loop, cognition/metacognition, and field tips.
+three-layer agentic loop, cognition and metacognition, and field tips.
 
-You do not need the Platform book to finish this track. You will *feel* the
-hole when you try to share memory, keys, and eval across two teams — that
-hole is [platform ch. 1](../../platform/1-why-a-platform/).
+You can finish this track as an agent author without an org-wide platform
+book. You will feel the hole when you try to share memory, keys, and eval
+across two teams — that hole is session storage, registries, and shared
+observability, which sit outside this chapter's map.
 
 ## Check yourself
 
@@ -303,8 +330,8 @@ hole is [platform ch. 1](../../platform/1-why-a-platform/).
    Name one tool per *act* beat. Where would *learn* change the plan?
 3. Why does registering a JSON schema not by itself give you production
    tool use? Name two failure modes the runtime must own.
-4. MCP is introduced here and taught in chapter 3. In one sentence, what
-   problem does a *protocol* solve that a Python decorator does not?
+4. In one sentence, what problem does a shared tool protocol solve that a
+   Python decorator on one app does not?
 5. Map a bug to a layer: the bot is witty but refunds the wrong order.
    Persona, tools, reasoning, knowledge, or evaluation — and what would
    you inspect first?
@@ -320,5 +347,3 @@ hole is [platform ch. 1](../../platform/1-why-a-platform/).
    one fails by drowning the writer in research chatter, and which fails
    by dropping a field the writer needed?
 10. Why are the five layers not a top-to-bottom pipeline you run once?
-
-Continue to [LLMs, prompting, and agents](../2-llms-prompting-agents/).

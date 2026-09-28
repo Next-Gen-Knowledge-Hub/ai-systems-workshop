@@ -4,14 +4,13 @@ Companion notes for **Chapter 17** of *Hands-On Machine Learning with
 Scikit-Learn, Keras, and TensorFlow* (2nd edition, Aurélien Géron;
 O'Reilly, 2019).
 
-[Chapter 16](../16-nlp-attention/) fitted sequence models that map
-tokens to tokens. This chapter is **unsupervised representation and
-generation**: squeeze an input through a bottleneck, reconstruct it,
-optionally sample new inputs from a latent space, or pit two nets
-against each other until one of them fakes the data distribution.
-Skip it and you will call every unlabeled net "a GAN," use a linear
-autoencoder and think you invented PCA, or ship a generator whose
-loss went down while the pictures went to noise.
+Sequence models map tokens to tokens. This chapter is **unsupervised
+representation and generation**: squeeze an input through a
+bottleneck, reconstruct it, optionally sample new inputs from a latent
+space, or pit two nets against each other until one of them fakes the
+data distribution. Skip it and you will call every unlabeled net "a
+GAN," use a linear autoencoder and think you invented PCA, or ship a
+generator whose loss went down while the pictures went to noise.
 
 ## The mental model
 
@@ -27,7 +26,7 @@ They do not share a training loop.
        bottleneck                              [discriminator]
            |                                   real x vs x_fake
            v                                          |
-  [decoder] --> x_hat                                 v
+    [decoder] --> x_hat                                 v
        |                                        "real or fake?"
        v
   L(x, x_hat)  (+ KL if VAE)
@@ -49,53 +48,47 @@ you are in 2026, read **What aged** before you pick a generator.
 
 ## Efficient representations
 
-**Problem** — Raw inputs (pixels, readings, bag-of-words counts) are
-wide, redundant, and unlabeled. You still want a shorter vector that
+Raw inputs (pixels, readings, bag-of-words counts) are wide,
+redundant, and unlabeled. You still want a shorter vector that
 preserves what matters.
 
-**Solution** — Build a mapping `x → z → x̂` and train so `x̂` is close
-to `x`. If `z` is lower-dimensional than `x` (**undercomplete**), the
-net cannot copy. It has to throw away noise and keep structure. That
-`z` is the representation: downstream clustering, visualization,
-compression, anomaly scores (`||x - x̂||` is large when `x` is weird).
+Build a mapping `x → z → x̂` and train so `x̂` is close to `x`. If `z`
+is lower-dimensional than `x` (**undercomplete**), the net cannot
+copy. It has to throw away noise and keep structure. That `z` is the
+representation: downstream clustering, visualization, compression,
+anomaly scores (`||x - x̂||` is large when `x` is weird).
 
 This is the unsupervised twin of "learn features, then classify."
-[Chapter 8](../8-dimensionality-reduction/) got you PCA and manifolds
+Earlier dimensionality-reduction chapters gave you PCA and manifolds
 as linear/kernel geometry. Here the encoder and decoder can be deep
 and nonlinear.
 
-**Failure mode** — A bottleneck that is still wide enough to memorize.
-Then reconstructions look perfect and `z` is useless. Another: using
-the reconstruction loss as a quality score for *generation*. A sharp
-reconstruction of the training set is not a diverse sample of the
-data manifold.
+A bottleneck that is still wide enough to memorize produces perfect
+reconstructions and a useless `z`. Using the reconstruction loss as a
+quality score for *generation* is another trap: a sharp reconstruction
+of the training set is not a diverse sample of the data manifold.
 
 ## Linear undercomplete autoencoders ≈ PCA
 
 If the encoder and decoder are **linear** and you minimize mean squared
 error with an undercomplete `z`, the space you get is the PCA subspace
 (same span; the actual axes may be rotated). That is the point of the
-exercise, not a bug.
+exercise.
 
-**Problem** — People open Keras, stack Dense layers with linear
-activations, and announce a deep representation.
+People open Keras, stack Dense layers with linear activations, and
+announce a deep representation. Treat the linear undercomplete AE as a
+**unit test of your understanding**. If you cannot recover PCA-like
+reconstructions, your training loop is wrong before you add ReLUs.
 
-**Solution** — Treat the linear undercomplete AE as a **unit test of
-your understanding**. If you cannot recover PCA-like reconstructions,
-your training loop is wrong before you add ReLUs.
-
-**Failure mode** — Assuming "autoencoder" always beats PCA. On linear
-Gaussian-ish data, PCA is cheaper, unique (up to sign), and easier to
-explain. Use a deep AE when the manifold is bent.
+On linear Gaussian-ish data, PCA is cheaper, unique (up to sign), and
+easier to explain. Use a deep AE when the manifold is bent.
 
 ## Stacked autoencoders
 
-**Problem** — One linear map cannot untangle a bent manifold. You want
-depth.
-
-**Solution** — Stack nonlinear layers in the encoder, mirror them in
-the decoder, train end-to-end with a reconstruction loss. "Stacked"
-in this chapter means **deep**, not a new algorithm. You inspect:
+One linear map cannot untangle a bent manifold. You want depth. Stack
+nonlinear layers in the encoder, mirror them in the decoder, train
+end-to-end with a reconstruction loss. "Stacked" in this chapter means
+**deep**, not a new algorithm. You inspect:
 
 - **Reconstructions.** Do hold-out images look like the inputs, or
   like a blurry average? Blurry means the bottleneck or the decoder
@@ -110,15 +103,14 @@ in this chapter means **deep**, not a new algorithm. You inspect:
 In the era this book records, deep supervised nets were hungry for
 labels. A stacked AE gave you encoder weights **trained on unlabeled
 `x`**. You then chopped the decoder, stuck a classifier on `z`, and
-fine-tuned. [Chapter 11](../11-training-dnns/) already named this
-pattern.
+fine-tuned. Earlier training chapters already named this pattern.
 
-**Failure mode** — Running greedy pretraining in 2026 as a first
-choice. Residual nets, better init, batch-norm, and huge labeled
+Running greedy pretraining in 2026 as a first choice is usually the
+wrong default. Residual nets, better init, batch-norm, and huge labeled
 (or weakly labeled) sets made the trick mostly historical for vision
 classifiers. The *idea* — use unlabeled data to get a representation —
 did not die; it moved (contrastive learning, masked autoencoders,
-generative pretraining in [ch. 16](../16-nlp-attention/)).
+generative pretraining on text).
 
 ### Tying weights
 
@@ -126,9 +118,10 @@ The decoder matrix can be the transpose of the encoder matrix (per
 layer). Fewer parameters, a hard-coded "undo," less overfitting on
 small sets.
 
-**Failure mode** — Tying weights and then changing encoder/decoder
-widths so the transpose is the wrong shape. Tying is a constraint,
-not a free regularization you sprinkle after a random architecture.
+Tying weights and then changing encoder/decoder widths so the
+transpose is the wrong shape breaks the constraint. Tying is a
+constraint, not a free regularization you sprinkle after a random
+architecture.
 
 ### Greedy layer-wise training (historical)
 
@@ -138,9 +131,9 @@ trainable. You should recognize the name so old papers do not look
 like magic. You should not start a new stack this way without a
 reason: end-to-end training with modern init usually wins.
 
-**Failure mode** — Stopping after layer-wise training and never
-fine-tuning the stack. Each layer optimized a local reconstruction
-that can be a poor global code.
+Stopping after layer-wise training and never fine-tuning the stack
+leaves each layer optimized for a local reconstruction that can be a
+poor global code.
 
 ## Convolutional, recurrent, denoising, sparse
 
@@ -149,12 +142,10 @@ the data, as in the rest of Part II.
 
 - **Convolutional AE.** Conv encoder, conv-transpose (or upsample +
   conv) decoder. Images should not be flattened into a Dense soup if
-  you care about locality. [Chapter 14](../14-cnns/) is the conv
-  vocabulary.
+  you care about locality.
 - **Recurrent AE.** Sequence in, a code (last state or a pooled
-  sequence), sequence out. Related to the encoder-decoder of
-  [ch. 16](../16-nlp-attention/), but the target is the **input
-  sequence** (or a reconstruction of it), not a translation.
+  sequence), sequence out. Related to encoder-decoder translation, but
+  the target is the **input sequence** (or a reconstruction of it).
 - **Denoising AE.** Corrupt `x` (noise, dropout of pixels, masking)
   and ask the decoder to recover the **clean** `x`. The code cannot
   store a pixel-perfect copy of the input it saw; it has to store
@@ -164,17 +155,15 @@ the data, as in the rest of Part II.
   activations so only a few units fire. Sparsity is another way to
   force an information bottleneck when you do not want a tiny `z`.
 
-**Problem** — A vanilla AE copies `x` through a too-wide `z`.
+A vanilla AE copies `x` through a too-wide `z`. Add a constraint that
+is not just "small `z`": noise, sparsity, a variational prior, or a
+tiny code. Pick one constraint you can measure.
 
-**Solution** — Add a constraint that is not just "small `z`": noise,
-sparsity, a variational prior, or a tiny code. Pick one constraint
-you can measure.
-
-**Failure mode** — Denoising with so much noise that the only
-survivable reconstruction is the dataset mean. Sparse penalties so
-strong that `z` is all zeros and the decoder learns a constant. Always
-look at reconstructions **and** at the distribution of `z`, not just
-the scalar loss.
+Denoising with so much noise that the only survivable reconstruction
+is the dataset mean, or sparse penalties so strong that `z` is all
+zeros and the decoder learns a constant, both destroy the
+representation. Always look at reconstructions **and** at the
+distribution of `z`, not just the scalar loss.
 
 ## Variational autoencoders
 
@@ -184,24 +173,22 @@ forces the point codes of a plain AE to fill a nice region; they can
 be a spiky cloud with holes. Sampling between two codes then decodes
 as garbage.
 
-**Problem** — You want a decoder that defines a distribution over `x`,
-and a latent space you can sample.
-
-**Solution** — The encoder outputs a **mean and a log-variance** per
-example, not a point. You sample `z` with the reparameterization trick
-(`z = μ + σ ⊙ ε`, `ε ~ N(0, I)`) so gradients flow. The loss is
+You want a decoder that defines a distribution over `x`, and a latent
+space you can sample. The encoder outputs a **mean and a log-variance**
+per example, not a point. You sample `z` with the reparameterization
+trick (`z = μ + σ ⊙ ε`, `ε ~ N(0, I)`) so gradients flow. The loss is
 reconstruction (how well `x` is decoded from that `z`) plus a KL term
 that pushes `(μ, σ)` toward a simple prior, usually `N(0, I)`.
 
 At generation time you skip the encoder: draw `z` from the prior, run
 the decoder. At representation time you can use `μ` as the code.
 
-**Failure mode** — KL that dies (`σ → 0`, encoder "cheats" back toward
-a point AE) or KL that dominates (decoder ignores `z`, reconstructions
-are bland averages — posterior collapse). Watching the two loss terms
-separately is the whole game. Another failure: treating VAE samples as
-a fidelity competition against GANs. Classic VAEs were blurrier; they
-bought a **structured latent** and a proper probabilistic story.
+Watch the two loss terms separately. KL that dies (`σ → 0`, encoder
+"cheats" back toward a point AE) or KL that dominates (decoder ignores
+`z`, reconstructions are bland averages — posterior collapse) are the
+usual failures. Treating VAE samples as a fidelity competition against
+GANs misses the point: classic VAEs were blurrier; they bought a
+**structured latent** and a proper probabilistic story.
 
 The reparameterization trick is the implementation hinge. If you sample
 `z` with a non-differentiable draw and no path around it, the encoder
@@ -209,15 +196,14 @@ does not learn.
 
 ## Generative adversarial networks
 
-**Problem** — You want samples from `p_data` and you do not want to
-write `p_data`. Reconstruction losses tend to average; images look
-blurry.
+You want samples from `p_data` and you do not want to write `p_data`.
+Reconstruction losses tend to average; images look blurry.
 
-**Solution** — Two nets. The **generator** maps noise `z` to `x_fake`.
-The **discriminator** sees real `x` and `x_fake` and tries to tell
-them apart. The generator is trained to fool the discriminator. There
-is no decoder of a given `x` and no explicit reconstruction of
-training rows.
+Two nets. The **generator** maps noise `z` to `x_fake`. The
+**discriminator** sees real `x` and `x_fake` and tries to tell them
+apart. The generator is trained to fool the discriminator. There is
+no decoder of a given `x` and no explicit reconstruction of training
+rows.
 
 ```
   z ~ noise  -->  G  -->  x_fake  --+
@@ -247,9 +233,9 @@ GANs are famous because they fail in characteristic ways:
   you cannot stop at "loss < ε." You need samples, maybe an FID-class
   score (later than some 2019 notebooks), and domain checks.
 
-**Failure mode** — Reporting generator loss going down as success.
-The generator loss going down can mean `D` got worse. Trust images
-and coverage of modes.
+Reporting generator loss going down as success is unreliable. The
+generator loss going down can mean `D` got worse. Trust images and
+coverage of modes.
 
 ### DCGAN
 
@@ -273,18 +259,19 @@ already known to be miserable.
   fine control. This is the photorealistic-face story the 2e book
   can close on.
 
-**Failure mode** — Implementing "StyleGAN" as "a DCGAN with a prettier
-name." Mapping network, style space, and noise inputs are the design.
-Also: training these recipes from scratch is a research compute budget,
-not a weekend homework, once you leave tiny toy images.
+Implementing "StyleGAN" as "a DCGAN with a prettier name" skips the
+design: mapping network, style space, and noise inputs. Also: training
+these recipes from scratch is a research compute budget, not a weekend
+homework, once you leave tiny toy images.
 
 ## What aged since 2019
 
 - **Diffusion (and flow-matching) models took the photorealistic
   generation crown** for images, and a large share of audio/video.
-  The 2020s default for "make me a picture" is not a GAN. If you are
-  choosing a generator in 2026, start from that fact, then read the
-  next bullets before you delete GANs from your brain.
+  The 2020s default for "make me a picture" is a diffusion-class
+  model. If you are choosing a generator in 2026, start from that
+  fact, then read the next bullets before you delete GANs from your
+  brain.
 - **GANs are not dead.** They still show up where you want a fast
   forward pass (one shot, no 50-step denoising), some graphics and
   compression hybrids, certain small-data domains, and as
@@ -293,8 +280,8 @@ not a weekend homework, once you leave tiny toy images.
 - **Autoencoders are still useful** for compression, denoising,
   anomaly/novelty scores, and as **encoders of a latent space**.
   Modern latent diffusion *uses* a VAE-class encoder so the diffusion
-  model can run in a cheaper `z`. The AE did not lose; it changed
-  jobs.
+  model can run in a cheaper `z`. The AE changed jobs; it did not
+  disappear.
 - **Greedy layer-wise AE pretraining** is a historical algorithm for
   deep nets. Unsupervised / self-supervised pretraining is very much
   alive; the recipe is different.
@@ -312,8 +299,8 @@ section alone.
 ## Check yourself
 
 1. Why does an undercomplete bottleneck *have* to throw information
-   away, and what goes wrong if you "fix" that by widening `z` until
-   reconstructions are perfect?
+   away, and what goes wrong if you widen `z` until reconstructions
+   are perfect?
 2. When is a linear autoencoder allowed to be "just PCA"? When would
    you still prefer PCA?
 3. You plot reconstructions and they look great on the training set
@@ -325,8 +312,8 @@ section alone.
 6. Denoising vs sparse vs undercomplete: three ways to stop copying.
    Pick one and name a failure if you turn that knob too far.
 7. A VAE encoder emits `μ` and `log σ²`. Why do you sample with
-   `μ + σ ⊙ ε` instead of `z ~ N(μ, σ²)` as a black box? What does
-   the KL term buy you at *generation* time?
+   `μ + σ ⊙ ε` instead of drawing `z ~ N(μ, σ²)` as a black box?
+   What does the KL term buy you at *generation* time?
 8. Posterior collapse vs a collapsed `σ → 0`: which loss term won,
    and what do samples / reconstructions look like?
 9. GAN mode collapse vs a perfect discriminator: which failure is
@@ -335,5 +322,3 @@ section alone.
 10. DCGAN vs progressive growing vs StyleGAN: what problem does each
     recipe add on top of "two nets in a loop"? What took the
     photorealistic crown after this edition?
-
-Continue to [Reinforcement Learning](../18-reinforcement-learning/).

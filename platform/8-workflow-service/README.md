@@ -11,12 +11,10 @@ chapter was a capability a workflow *calls*. This chapter is the
 unit you *deploy*. Skip it and you still have notebooks, one-off
 FastAPI files, and four teams inventing four ways to stream tokens.
 
-The Agents track is a different book. Control graphs, handoffs,
-flows vs hub-and-spoke: [agents ch. 4](../../agents/4-multi-agent-systems/).
-Inner / task / meta loops: [agents ch. 9](../../agents/9-agentic-loop/).
-Mention those folders. Do not rewrite them. This folder stays on the
-**Workflow Service** (control plane) and the **runtime server**
-(data plane in the container).
+The folder stays on the **Workflow Service** (control plane) and the
+**runtime server** (data plane in the container). Control graphs,
+handoffs, and agentic loops are a different book; here the workflow
+is the **process** those graphs run in.
 
 ## The mental model
 
@@ -56,21 +54,17 @@ The one sentence to remember: **the decorator is the deploy
 contract**; Kubernetes YAML is an implementation detail you should
 not type.
 
-[Chapter 2](../2-sdk-and-api/) promised one workflow / one service
-and three response modes. This chapter builds the server that
-honors them. Multi-agent shapes vs a decorated service sit in
-[`TRADEOFFS.md`](../../TRADEOFFS.md) (that table). Sync vs stream
-vs async sits there too.
+The platform SDK promised one workflow / one service and three
+response modes. This chapter builds the server that honors them.
 
 ## Workflow runtime server
 
-[Chapter 2](../2-sdk-and-api/) said the deploy pipeline stuffs your
-code, the SDK, and dependencies into an image. Something has to
-listen. That something is **library code in the SDK**, not a fifth
-platform microservice. The image entrypoint *is* the runtime
-server. From outside: HTTP. From inside: your function plus enough
-wrapping to enforce timeout, map modes, and propagate traces from
-[chapter 7](../7-observability/).
+The deploy pipeline stuffs your code, the SDK, and dependencies into
+an image. Something has to listen. That something is **library code
+in the SDK**, not a fifth platform microservice. The image
+entrypoint *is* the runtime server. From outside: HTTP. From inside:
+your function plus enough wrapping to enforce timeout, map modes, and
+propagate traces.
 
 ### The @workflow decorator
 
@@ -93,8 +87,8 @@ Three buckets of knobs:
 A patient-intake teaching workflow then looks like intent:
 `get_or_create` session, `guardrails.validate_input`, `data.search`,
 `models.chat`, return a dict. `GenAIPlatform()` inside the function
-(or a module-level client) is the SDK from chapter 2, not a global
-god object you reimplement.
+(or a module-level client) is the SDK client, not a global god
+object you reimplement.
 
 If a knob cannot be expressed on the decorator, it will reappear as
 a snowflake Dockerfile. Resist until you have evidence.
@@ -135,9 +129,9 @@ garbage), `wait_for` the function on a worker thread if it is
 sync Python, 504 on timeout, 500 on uncaught exception, 200 with
 the returned dict.
 
-Trace context comes off gateway headers (`x-trace-id` and friends
-from chapter 7) **before** the first `platform.*` call. If you
-forget, every span in this request is an orphan.
+Trace context comes off gateway headers (`x-trace-id` and friends)
+**before** the first `platform.*` call. If you forget, every span
+in this request is an orphan.
 
 Sync is the wrong mode for "summarize these 400 PDFs." You will
 fight idle timeouts and hold a worker for minutes. That is async.
@@ -148,10 +142,10 @@ fight idle timeouts and hold a worker for minutes. That is async.
 becomes a Server-Sent Event. Conversational UIs want tokens as
 the Model Service produces them, not a JSON blob at the end.
 
-Inside: `platform.models.chat_stream(...)` (chapter 3) instead of
-`chat`. Loop, yield `{"token": ...}`, then a terminal event
-(`done`, `session_id`). The runtime does not guess tokens from a
-blocking `return`.
+Inside: `platform.models.chat_stream(...)` instead of `chat`.
+Loop, yield `{"token": ...}`, then a terminal event (`done`,
+`session_id`). The runtime does not guess tokens from a blocking
+`return`.
 
 Errors mid-stream are uglier than sync 500s: the client already
 drew half an answer. Decide whether to send an SSE error event
@@ -268,8 +262,7 @@ scale-from-zero). SDK clients retry **transient** failures with
 backoff. The workflow function sees success or a final
 exception.
 
-This is **not** the Model Service's provider retry from
-[chapter 3](../3-model-service/). Two layers:
+This is **not** the Model Service's provider retry. Two layers:
 
 ```
   workflow  --SDK retry-->  Model Service  --provider retry-->  vendor
@@ -280,9 +273,8 @@ completion *from* OpenAI. Independent. A 429 from the vendor is
 not cured by retrying the gRPC to your own Model Service in a
 tight loop — that is how you amplify a quota problem.
 
-Honor `is_idempotent` on tools ([chapter 6](../6-tools-and-guardrails/))
-before the SDK retries Execute. POST-that-charges is not
-"transient" just because the socket died.
+Honor `is_idempotent` on tools before the SDK retries Execute.
+POST-that-charges is not "transient" just because the socket died.
 
 `max_retries` on the **workflow decorator** is about the
 *incoming* HTTP request (gateway → this container), another
@@ -308,10 +300,9 @@ work) while staying live (do not thrash restarts). Product
 choice: a workflow that can still answer from cache might stay
 ready with degraded mode. Document it.
 
-The runtime from earlier listings exposes both. The Deployment
-in § runtime management points probes at them. If you only
-implement `/health`, you have collapsed two meanings and will
-restart pods that were merely waiting on a dependency.
+The runtime exposes both. The Deployment points probes at them.
+If you only implement `/health`, you have collapsed two meanings
+and will restart pods that were merely waiting on a dependency.
 
 ## Workflow composition
 
@@ -336,9 +327,9 @@ Ticket-responder teaching shape: classify with a small model,
 Search stays owned by the team that tunes chunking.
 
 Auth and trace: the call must forward identity and `trace_id` or
-you get a child trace that cannot join the parent waterfall
-(chapter 7) and a confused-deputy risk. Treat child workflows as
-you treat tools: least privilege, not "internal so skip auth."
+you get a child trace that cannot join the parent waterfall and a
+confused-deputy risk. Treat child workflows as you treat tools:
+least privilege, not "internal so skip auth."
 
 Timeouts nest. Parent timeout 30s and child timeout 30s means
 the child can eat the whole budget. Set parent > sum of sync
@@ -439,7 +430,7 @@ Response: `deployment_id`, status.
 replicas, healthy endpoints. `GetDeploymentStatus` is what CI
 polls. `RollbackWorkflow` points traffic at a previous image
 and spec — your prompt-adjacent analog of reverting a bad
-container, not an experiment (experiments are chapter 7).
+container, not an experiment.
 
 Register without deploy is a saved spec. Deploy without register
 is how you get snowflake images the next CLI run cannot find.
@@ -447,8 +438,8 @@ Keep the order.
 
 ## Deployment pipeline
 
-Chapter 2's one-liner: `genai-platform deploy`. Here, the steps
-and the gateway mapping.
+The one-liner is `genai-platform deploy`. Here, the steps and the
+gateway mapping.
 
 ### What genai-platform deploy does
 
@@ -478,8 +469,7 @@ time, deploy is a load test. Keep imports side-effect light.
 ### Route registration with the API gateway
 
 When replicas pass **readiness**, Workflow Service tells the
-[gateway](../2-sdk-and-api/): `api_path` → these endpoints. That
-is the missing sentence from chapter 2. The routing table is
+gateway: `api_path` → these endpoints. The routing table is
 **dynamic**:
 
 - new replica ready → add address
@@ -542,26 +532,26 @@ A request to `/patient-assistant`:
    Workflow Service maintains.
 2. A ready replica's runtime binds JSON to the function.
 3. Function calls Session, Data, Model, Guardrails; SDK retries
-   blips; TracedService records spans (chapter 7).
+   blips; TracedService records spans.
 4. Sync: JSON back. Stream: SSE. Async: 202, job row, poll.
 
 Nobody wrote a Deployment by hand. Nobody opened a provider SDK
-inside the handler if they followed chapters 3–6. The graph you
-*might* run **inside** the function (handoffs, ReAct, research
-loop) is Agents-track work. The container, the route, and the
+inside the handler if they followed the platform services. The
+graph you *might* run **inside** the function (handoffs, ReAct,
+research loop) is agent work. The container, the route, and the
 job table are this chapter.
 
 ### What this service is not
 
-It is not the agent graph. Flows, hubs, teams, SPAL layers:
-Agents. The workflow is the **process** that graph runs in.
+It is not the agent graph. Flows, hubs, teams, layered loops
+belong with agent design. The workflow is the **process** that
+graph runs in.
 
 It is not Observability. You emit traces; you do not store them
 here. Job progress is not a substitute for a generation span.
 
 It is not the gateway. It **feeds** the gateway routes. Auth,
-quotas, and external HTTP still live in chapter 2's gateway
-story.
+quotas, and external HTTP still live with the gateway.
 
 It is not a replacement for a general job bus for *non-AI*
 batch. You *can* run a slow workflow async; you should not
@@ -594,10 +584,7 @@ rebuild payroll on `@workflow` because the HPA looks handy.
 9. List the six deploy-CLI steps. At which step does `api_path`
    become a gateway route, and what happens to that table when
    a replica fails ready?
-10. In one sentence each: what you still learn from
-    [agents ch. 4](../../agents/4-multi-agent-systems/) and
-    [agents ch. 9](../../agents/9-agentic-loop/) after this
-    folder — without turning those graphs into extra Kubernetes
-    Services.
-
-Continue to [Building an AI assistant](../9-building-an-assistant/).
+10. In one sentence each: what problem does composition solve
+    that copying a search team's Python into your image does
+    not, and what does the HPA fail to see when the workflow is
+    token-bound and idle on gRPC?

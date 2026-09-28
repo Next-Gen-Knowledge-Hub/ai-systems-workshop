@@ -12,13 +12,9 @@ Guardrails decide which of those changes are allowed. Skip this chapter
 and "function calling" is a JSON blob in a prompt plus an API key in an
 environment variable — until the sixth application copies both.
 
-The Agents track is a different book. Protocol details, STDIO vs SSE,
-writing a server, Inspector: [agents ch. 3](../../agents/3-mcp/). Input
-and output guardrails *inside an agent graph*, agents-as-guardrails,
-handoffs: [agents ch. 4](../../agents/4-multi-agent-systems/). This
-folder stays on the **Tool Service**: registry, adapters, credentials,
-MCP as an interoperability *bus*, execution limits, and **policies the
-platform enforces**. Mention those agent chapters. Do not rewrite them.
+This folder stays on the **Tool Service**: registry, adapters,
+credentials, MCP as an interoperability *bus*, execution limits, and
+**policies the platform enforces**.
 
 ## The mental model
 
@@ -47,17 +43,13 @@ platform enforces**. Mention those agent chapters. Do not rewrite them.
 The one sentence to remember: **a tool is a governed capability**, not a
 function schema. The schema is what the *model* sees. Identity, version,
 owner, credentials, rate limits, side effects, and audit are what the
-*organization* sees. Guardrails are not a swear filter bolted on the
-reply. They are **execution policy** at every hop where the system might
-do something irreversible.
+*organization* sees. Guardrails are execution policy at every hop where
+the system might do something irreversible. A swear filter on the reply
+is only one slice of that policy surface.
 
 Chapter 1's "safe action" bullet is this service. Sprawl here looks like
 four copies of `check_status`, four Slack tokens in four `.env` files,
 and no one who can answer "which bots can refund."
-
-MCP vs native tools, and the guardrail stack (prompt-only vs input vs
-output vs behavioral), sit in [`TRADEOFFS.md`](../../TRADEOFFS.md). Use
-this folder for how a **platform** owns the expensive rows.
 
 ## Tools as platform-managed capabilities
 
@@ -69,7 +61,7 @@ The inversion: applications **declare which capabilities they need**.
 The platform owns registration, discovery, credential injection,
 execution, and policy. A scheduling tool exists whether or not today's
 assistant is the one calling it. Another team can discover it, request
-access, and not reimplement FHIR.
+access, and leave FHIR to the adapter authors.
 
 ```
   BEFORE                         AFTER
@@ -85,7 +77,7 @@ closure in a notebook cannot.
 ### The tool service contract
 
 Same pattern as Model, Session, and Data: a small gRPC (or equivalent)
-surface, not twelve client libraries with different verbs.
+surface, with a shared set of verbs rather than twelve client libraries.
 
 Four operations cover the lifecycle:
 
@@ -129,11 +121,11 @@ consumers:
   +------------------------------------------------------+
 ```
 
-The model should not see the credential name or the internal endpoint.
-The model *should* see a description that prevents `book_appointment`
-from being used as `cancel_appointment`. Operational metadata is how
-policy decides "this is not idempotent, do not retry blindly" without
-parsing English in the docstring.
+The model should see a description that prevents `book_appointment`
+from being used as `cancel_appointment`. Keep the credential name and
+the internal endpoint out of that schema layer. Operational metadata is
+how policy decides "this is not idempotent, do not retry blindly"
+without parsing English in the docstring.
 
 Side-effect documentation is not comments for humans only. Behavioral
 guardrails later need to know whether a call mutates, notifies, or
@@ -147,8 +139,8 @@ Register with a dotted name, a schema, an endpoint or adapter id, a
 behavior block (`is_read_only`, `is_idempotent`), rate limits, a
 credential ref. Discover by namespace or capability. Pass the returned
 schemas into the Model Service's generate call. When the model emits a
-tool call, `platform.tools.execute(...)` — not `requests.post` with a
-key the workflow loaded from disk.
+tool call, `platform.tools.execute(...)` — with credentials injected
+by the platform rather than loaded from disk in the workflow.
 
 If developers still copy endpoint URLs into workflow code, the SDK has
 failed even if the registry is full. The test: a new hire can find
@@ -157,8 +149,8 @@ opening the EHR vendor's OAuth guide.
 
 ## Registry: namespacing, discovery, versions
 
-The registry is the catalog. Authoritative. Searchable. Not a folder of
-Python files that import each other.
+The registry is the catalog. Authoritative. Searchable. A searchable
+inventory rather than a folder of Python files that import each other.
 
 The org-scale question: global tools vs per-app tools? Usually **both**,
 with namespacing as the structure. Global: "send transactional email"
@@ -182,8 +174,9 @@ time*:
 ```
 
 Discovery by prefix (`healthcare.scheduling.*`) is how a workflow loads
-a *coherent* kit instead of the union of 400 tools (tool overload is an
-agent-quality problem; the platform should not force it).
+a *coherent* kit. Dumping the union of 400 tools into one prompt is an
+agent-quality problem; the platform should offer scoped discovery so
+callers can avoid that overload.
 
 ACL on namespaces is a security control. Scheduling tools are not a
 participation trophy for every application id.
@@ -224,7 +217,8 @@ Schema is unchanged — treat them as majors or you will skip a
 confirmation policy.
 
 Do not leave infinite versions forever. Deprecate, alert consumers,
-delete when the breaker is quiet. The registry is not git.
+delete when the breaker is quiet. The registry is a living catalog with
+a retirement path; treat it that way rather than as an endless history.
 
 ## Execution: adapters, credentials, sync vs async
 
@@ -256,8 +250,9 @@ An **adapter** sits between Execute and the vendor:
 
 The Tool Service contract stays stable when the vendor adds a field.
 Adapters are where retries that are *vendor-safe* live (idempotency
-keys, not "POST again and hope"). They are also where you strip
-secrets from logs: log the vendor request id, not the bearer token.
+keys, with a clear story when a blind POST would double-book). They are
+also where you strip secrets from logs: log the vendor request id, and
+keep the bearer token out of those lines.
 
 If you cannot name the adapter for a tool, you probably inlined HTTP
 in the workflow. That will grow a second auth story.
@@ -287,7 +282,8 @@ developers, you have a brochure.
 ### Credential store
 
 Most orgs already have Vault or a cloud secrets manager. The platform
-interface should **wrap**, not compete:
+interface should **wrap**, leaving the existing store as the source of
+truth:
 
 - **Store** — name, type, value, rotation policy, **allowed tool
   names**.
@@ -297,8 +293,8 @@ interface should **wrap**, not compete:
 - **Rotate** — new value, old value invalidated; in-flight calls fail
   or retry with backoff, they do not log the old secret.
 
-Retrieve is a privileged operation. Audit it. Chapter 7 will want those
-records next to the tool span. Even here: a retrieve without a
+Retrieve is a privileged operation. Audit it. Observability will want
+those records next to the tool span. Even here: a retrieve without a
 corresponding Execute is a smell.
 
 ### Synchronous vs asynchronous execution
@@ -323,14 +319,13 @@ authorization: human in the loop, hours.
 ```
 
 Sync is for bounded, predictable work. The Tool Service still applies
-timeouts; "sync" is not "wait forever."
+timeouts; "sync" still means "wait within a wall," with a hard kill.
 
 Async is for work that would stall the conversation. Return a task id
 immediately. The workflow continues (tell the user you are checking
-coverage) and resumes on completion. This rhymes with async ingest in
-[Data](../5-data-service/) and with job modes in
-[Workflow](../8-workflow-service/) — same product lesson, different
-service: **do not block the user on someone else's SLA**.
+coverage) and resumes on completion. The product lesson matches async
+ingest elsewhere on the platform: **do not block the user on someone
+else's SLA**.
 
 Idempotency matters more on async retries. If `is_idempotent` is false,
 duplicate Execute after a timeout might double-book. The adapter should
@@ -348,9 +343,9 @@ your org chart. Providers wrap once. Applications speak one protocol.
 Any host that implements the client side can call any server that
 implements the server side.
 
-How an *agent runtime* uses MCP (transports, Inspector, writing a
-server) is [agents ch. 3](../../agents/3-mcp/). Stay here for the
-**platform arithmetic** and the gaps you must still fill.
+Stay here for the **platform arithmetic** and the gaps you must still
+fill. Protocol transports, Inspector, and writing a server are a
+different teaching track.
 
 ### From N×M to N+M to M
 
@@ -378,10 +373,10 @@ one connection per server — plus the platform work MCP refuses to do
        +  credentials, policy, audit still here
 ```
 
-MCP is why you should not invent a private plugin format. It is not why
-you should delete the Tool Service. The protocol standardizes the *wire*.
-The platform standardizes *who paid, who was allowed, which version,
-which secret*.
+MCP is why you should adopt a shared wire format instead of inventing a
+private plugin format. The protocol standardizes the *wire*. The
+platform still standardizes *who paid, who was allowed, which version,
+which secret*. Keep the Tool Service; MCP does not replace it.
 
 ### Hosts, clients, and servers
 
@@ -406,14 +401,16 @@ Servers expose:
 
 - **Tools** — invokable actions (`tools/list`, `tools/call`). This maps
   onto the Tool Service Execute path. JSON Schema for arguments.
-- **Resources** — read-only context (files, records). Pull, do not
-  mutate. A codebase server might expose files as resources.
+- **Resources** — read-only context (files, records). Pull, with
+  mutation left to tools. A codebase server might expose files as
+  resources.
 - **Prompts** — reusable templates (review this PR with this rubric).
 
 The platform's first integration point is **tools**. Resources can feed
-the Data Service or session context if you have a story; do not silently
-treat `resources/read` as Execute. Prompts collide with Model Service
-system-prompt management — decide an owner, do not duplicate stores.
+document indexes or session context if you have a story; keep
+`resources/read` on its own path rather than folding it into Execute.
+Prompts collide with Model Service system-prompt management — decide an
+owner, and keep one store.
 
 ### What MCP does not cover
 
@@ -428,9 +425,8 @@ Say this louder than the announcement blog:
   limits, no cost attribution.
 - **Security as a complete model.** Prompt injection via tool results,
   confused deputies, over-broad servers — still *your* threat model.
-  Agents-track deployment ([agents ch. 8](../../agents/8-deploying-agents/))
-  goes deep on sandbox and egress; do not merge that chapter here, but
-  do not assume MCP saved you.
+  Sandbox and egress hardening are real work; assume MCP moves bytes in
+  a standard shape, and keep the threat model yours.
 
 MCP moves bytes from A to B in a standard shape. Before and after the
 call remain platform work. That is the whole justification for
@@ -445,7 +441,8 @@ transport.
 
 Layer what the protocol omitted:
 
-- Credentials from the store, not the server's env on a laptop.
+- Credentials from the store, with values kept out of the server's env
+  on a laptop.
 - Policy overrides at registration (`requires_confirmation`,
   `max_calls_per_minute`).
 - Every invocation traced and billed like a native adapter.
@@ -465,8 +462,8 @@ Execute is you acting on the world's APIs **on behalf of a model**. A
 runaway adapter loop, a multi-gigabyte payload, or a vendor outage
 should not take down the Tool Service or adjacent sessions.
 
-Isolation here is the same lesson as process isolation for workflows in
-[chapter 2](../2-sdk-and-api/), applied per invocation.
+Isolation here is the same lesson as process isolation for workflows,
+applied per invocation.
 
 ### Resource limits
 
@@ -505,15 +502,16 @@ recent failures:
 
 - **Closed** — traffic flows; failures counted.
 - **Open** — fail fast, no outbound call. The model gets a structured
-  error it can explain, not a 30s hang.
+  error it can explain, with a hang replaced by an immediate response.
 - **Half-open** — limited probes. Success closes. Failure re-opens.
 
 Thresholds and recovery timeouts are ops knobs. They belong in
-observability (error rate, state changes), not in an engineer's head
-after an incident.
+observability (error rate, state changes), with state changes visible
+before an engineer reconstructs them after an incident.
 
-Breakers are not a substitute for Validate. A tool that is "healthy"
-and booking the wrong patient is a policy miss, not a circuit miss.
+Breakers are a companion to Validate. A tool that is "healthy" and
+booking the wrong patient is a policy miss; the circuit only sees
+vendor health.
 
 ## Guardrails as execution policies
 
@@ -532,8 +530,8 @@ That distinction moves the control plane:
 - Execution policies are **yours**: domain, workflow, environment.
   They encode rules you would fire a human for skipping.
 
-If policy lives only as a paragraph in the system prompt, chapter 1
-already told you how that story ends. The Tool Service (with a
+If policy lives only as a paragraph in the system prompt, a user who
+asks the right way will walk past it. The Tool Service (with a
 guardrail evaluator on the path) is where rules become **deny/allow/
 confirm/transform** with an audit row.
 
@@ -559,9 +557,9 @@ policy can fire:
   (5) model output to user          output policy
 ```
 
-Prompt-only safety occupies none of these boxes reliably. Agents-track
-graphs may wrap extra critic agents around (5); this platform chapter
-insists (2)–(3) exist even if you never train a judge.
+Prompt-only safety occupies none of these boxes reliably. Extra critic
+loops around (5) are optional. Argument checks and execution policy
+(steps 2 and 3) still have to exist even when you never train a judge.
 
 ## In practice: input, output, behavioral
 
@@ -578,9 +576,9 @@ complete — hence defense in depth with output policy and least-privilege
 tools.
 
 **Scope the product:** topic classifiers so a scheduling assistant does
-not become a diagnosis bot. Out-of-scope is not a moral panic; it is a
-product boundary. Action might be *redirect* ("I can help with intake;
-for clinical questions, a clinician") rather than a dead end.
+not become a diagnosis bot. Out-of-scope is a product boundary. Action
+might be *redirect* ("I can help with intake; for clinical questions, a
+clinician") rather than a dead end.
 
 **PII on the way in:** warn or block SSNs and card numbers if the
 workflow is not supposed to collect them in chat.
@@ -602,13 +600,14 @@ persist them as gospel in Session).
 - **PII leakage** — redact or review. Clinic phone numbers vs patient
   SSNs are different; blind redact can be as wrong as blind send.
 - **Grounding** — claims about coverage or policy cross-checked against
-  Data Service hits or structured sources. Unverifiable claims: hedge,
-  flag, or block. This is cousin to Agents-track grounding critics;
-  here it is a **platform check** you can attach to many workflows.
-- **Brand / regulatory tone** — not "nice to have" in health and
-  finance.
+  retrieved hits or structured sources. Unverifiable claims: hedge,
+  flag, or block. This is a **platform check** you can attach to many
+  workflows.
+- **Brand / regulatory tone** — material in health and finance, with
+  real compliance weight.
 
-Severity tiers keep you honest:
+Severity tiers keep you honest. After you know which failure classes
+matter, this table is a starting map:
 
 | Severity | Example | Action |
 |---|---|---|
@@ -629,19 +628,21 @@ Examples that content filters will never catch:
 
 - Book specialist without referral on file.
 - Cancel and rebook the same slot in one turn (confused model) —
-  intervene, ask, do not execute both.
+  intervene, ask, and leave both calls unexecuted until confirmed.
 - Update address then notify the old address — reorder or gate on
   completion.
 - Failed insurance verify then book anyway — deny with an explanation.
 - Session budget: three booking attempts, then stop.
 
-Human confirmation is a behavioral action, not a UI flourish. Irreversible
-or expensive tools (`is_read_only=false`, high cost metadata) default to
-confirm in production until a risk committee says otherwise.
+Human confirmation is a behavioral action, with a real UI step behind
+it. Irreversible or expensive tools (`is_read_only=false`, high cost
+metadata) default to confirm in production until a risk committee says
+otherwise.
 
-Cross-tool rules need a **session-shaped view** of proposed actions, not
-one schema at a time. That is why this lives next to Execute, not only
-in the model prompt.
+Cross-tool rules need a **session-shaped view** of proposed actions,
+with the full proposed set visible rather than one schema at a time.
+That is why this lives next to Execute, with room for the prompt to
+stay descriptive rather than authoritative.
 
 Least privilege: Discover should have already hidden the refund tool
 from the marketing bot. Behavioral policy is defense in depth when the
@@ -674,8 +675,9 @@ No assistant redeploy to add a blocked topic.
 Policy version appears on every audit row so you can answer "what rule
 was live on Tuesday."
 
-Application code should not `if topic == diagnosis`. If it does, you
-will ship a second, drifting copy of the rule.
+Application code should leave topic checks in the policy document. An
+`if topic == diagnosis` branch in the assistant is a second, drifting
+copy of the rule.
 
 ### Making safety visible
 
@@ -690,17 +692,17 @@ Three audiences:
 - **Operations** — rates: block rate, confirm rate, breaker opens,
   p95 Execute, cost per tool.
 - **Compliance** — what was proposed, what ran, what was denied, who
-  confirmed. Retention that matches your regulation, not your log
-  disk.
+  confirmed. Retention that matches your regulation, sized for the
+  retention policy rather than the log disk alone.
 
 Every evaluation produces a record, including **allows**. Allows are
 how you measure false-negative risk. For classifier policies, store
 scores so you can retune thresholds without folklore.
 
 Hash content when you cannot retain raw PII in the same lake as traces.
-Join hashes to Session/Observability ids in
-[chapter 7](../7-observability/). This chapter's job is to **emit** the
-safety span; the next chapter's job is to store and experiment on it.
+Join hashes to Session and observability ids. This chapter's job is to
+**emit** the safety span; the store-and-experiment layer lives with
+observability.
 
 If you cannot graph "booking denials because missing referral" you
 cannot tell a product bug from a successful control.
@@ -708,8 +710,8 @@ cannot tell a product bug from a successful control.
 ## What this service is not
 
 It is not the agent loop. ReAct, which tool to pick, whether to try
-again: Agents track. This service is the **safe socket** that loop
-calls.
+again: that decision layer calls this service. This service is the
+**safe socket** that loop uses.
 
 It is not Data. Reading a policy PDF is retrieval. Filing a ticket is a
 tool. Mixing them ("the search tool that also emails Legal") is how
@@ -750,5 +752,3 @@ same trace as the model generation.
 10. Compliance wants to add a blocked topic tomorrow without a
     deploy. What artifact do they change, who reviews it, and what
     must appear in the audit row so Sarah can debug a false positive?
-
-Continue to [Observability and experimentation](../7-observability/).

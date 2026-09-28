@@ -3,21 +3,6 @@
 Companion notes for **Chapter 7** of *AI Agents in Action* (2nd edition,
 Micheal Lanham; Manning, 2026).
 
-Layer 4 can fetch the right chunk. Layer 2 can call the right tool.
-Without **layer 5** you cannot tell a prompt regression from a provider's
-bad Thursday, and the Learn beat of SPAL
-([ch. 1](../1-rise-of-ai-agents/)) is just "look at the JSON and hope."
-Skip this chapter and you will ship a RAG agent that sounds sure, then
-discover in Slack that it invented a policy. Evaluation does not make a
-bad architecture good. It makes behavior **visible** so you can iterate
-on purpose.
-
-The Platform track is a different book. Fleet-wide traces, quality
-scores as a service, datasets, annotation queues, and A/B live in
-[platform ch. 7](../../platform/7-observability/). This folder stays on
-**how you test, ground, and critique an agent**, including Phoenix as
-the lab notebook for *that* agent.
-
 ## The mental model
 
 Two timescales, one temptation to merge them and then debug neither.
@@ -59,10 +44,9 @@ path tells you the prompt change helped.
 
 ## Why agents need evaluation and feedback
 
-**Problem** — "We'll know it's wrong when users complain."
-
-**Solution** — Put a definition of *wrong* in the repo before the
-persona. Users complain late, loudly, and about a mix of retrieval,
+"We'll know it's wrong when users complain" puts the definition of
+*wrong* after the damage. Put a definition of *wrong* in the repo before
+the persona. Users complain late, loudly, and about a mix of retrieval,
 tools, and tone you cannot disentangle after the fact.
 
 Ordinary software tests a function against a return value. Agents
@@ -107,13 +91,10 @@ Human feedback (thumbs, comments) is necessary and biased. People
 upvote confident tone. Verify a sample. That verification is how
 you calibrate judges, not a sign that judges were a mistake.
 
-**Problem** — One "eval agent" asked to do safety, grounding, and
-style in a single paragraph of instructions.
-
-**Solution** — Split tools and agents by family, same as you split
-layers in [ch. 1](../1-rise-of-ai-agents/). A grounding agent should
-be almost boring. A red-team suite should be mean. A rubric critic
-should hold a spec.
+One "eval agent" asked to do safety, grounding, and style in a single
+paragraph of instructions will blur all five families. Split tools and
+agents by family. A grounding agent should be almost boring. A red-team
+suite should be mean. A rubric critic should hold a spec.
 
 Evaluation will not rescue a missing tool, a poisoned index, or a
 persona that orders refunds. If the architecture is wrong, scores
@@ -149,12 +130,10 @@ You still write it *before* you fall in love with a prompt.
                     --> raise the bar (language, grounding, CI)
 ```
 
-**Problem** — Build a clever agent, then hunt for a metric that
-makes the demo look green.
-
-**Solution** — Freeze the metric first, watch it go red, then earn
-the green. Initial failure is the point. If version zero already
-passes, the benchmark is too kind or the task is not the one you
+Building a clever agent, then hunting for a metric that makes the demo
+look green, inverts the method. Freeze the metric first, watch it go
+red, then earn the green. Initial failure is the point. If version zero
+already passes, the benchmark is too kind or the task is not the one you
 think.
 
 When two benchmarks fight (format vs completeness, refuse vs
@@ -209,8 +188,7 @@ deterministic code. It covers the parts pytest cannot hash.
 Minimum viable loop:
 
 1. A knowledge source you control (even a Python list of
-   sentences — you can swap in [ch. 6](../6-memory-and-rag/)
-   retrieval later).
+   sentences — you can swap in a real retrieval stack later).
 2. A tool that searches it. Name and docstring should tell the
    model *when* to call it. That beats a prompt chapter titled
    "Tools You Must Use."
@@ -236,19 +214,16 @@ worth cataloging in the harness output:
 - answered with a paragraph when the harness wanted a token
   (harness problem — fix the spec, not only the agent).
 
-**Problem** — Encoding the entire tool manual in the persona
-because the first run did not search.
+Encoding the entire tool manual in the persona because the first run
+did not search usually makes the next edit harder. Rename the tool and
+rewrite the docstring. If the model still will not call it, *then* add
+one line to the persona. Prompt clutter is how TDAD turns into prompt
+archaeology.
 
-**Solution** — Rename the tool and rewrite the docstring. If the
-model still will not call it, *then* add one line to the persona.
-Prompt clutter is how TDAD turns into prompt archaeology.
-
-This is the same design rule as [ch. 2](../2-llms-prompting-agents/):
-the persona is role and constraints; tools carry their own
-contracts. TDAD makes the rule testable: after a docstring change,
-the suite either calls the tool more often or it does not. A
-prompt change that "felt clearer" without a score is a diary
-entry.
+The persona is role and constraints; tools carry their own contracts.
+TDAD makes the rule testable: after a docstring change, the suite
+either calls the tool more often or it does not. A prompt change that
+"felt clearer" without a score is a diary entry.
 
 ### Refactoring the agent
 
@@ -271,12 +246,10 @@ Order of cheap moves:
 4. **Model pin** — Changing gpt-x to gpt-y *and* the prompt in
    one step burns the attribution TDAD was for.
 
-**Problem** — After failures, adding every idea to the prompt:
-few-shot, tool list, threat of punishment, chain-of-thought, JSON
-reminder.
-
-**Solution** — One change per run of the suite. Record pass rate.
-Revert changes that do not move the rate. This is slow in wall
+After failures, adding every idea to the prompt — few-shot, tool
+list, threat of punishment, chain-of-thought, JSON reminder — hides
+which change mattered. One change per run of the suite. Record pass
+rate. Revert changes that do not move the rate. This is slow in wall
 clock and fast in calendar time compared with a 400-line persona
 nobody will edit.
 
@@ -287,8 +260,8 @@ not a failure of TDAD.
 
 Conflicting rows: one question wants a refusal, another wants a
 guessy customer-support tone. That is not a refactor of
-temperature. That is two personas or a routing policy
-([ch. 8](../8-deploying-agents/) will care; here, split the table).
+temperature. That is two personas or a routing policy. Split the
+table.
 
 ### An agent evaluator
 
@@ -313,14 +286,12 @@ small rubric. Same benchmark table. Different scorer.
 Typed output matters. A paragraph that says "looks good" is not
 something CI can gate. A boolean plus feedback is.
 
-**Problem** — The evaluator sees the gold answer and the candidate,
-and "helpfully" agrees.
-
-**Solution** — Write evaluator instructions like a pedant: check
-for the key term or the key proposition; do not reward style; do
-not fail for extra true words unless the spec says so. Sample
-disagreements by hand. If the judge and you diverge, the judge
-is another prompt to TDAD, not an oracle.
+The evaluator that sees the gold answer and the candidate will
+"helpfully" agree if you let it. Write evaluator instructions like
+a pedant: check for the key term or the key proposition; do not
+reward style; do not fail for extra true words unless the spec says
+so. Sample disagreements by hand. If the judge and you diverge, the
+judge is another prompt to TDAD, not an oracle.
 
 Keep the evaluator **dumber than the agent** when you can. A
 classifier "is the token present / is the refusal present" is
@@ -360,18 +331,15 @@ Grounding means: the answer is **supported by the context you
 claim it came from** — retrieved chunks, citations, tool
 payloads — not by the model's prior. It is not "the answer is
 true in the world." A grounded answer can still be stale if the
-chunk is stale. That is a [ch. 6](../6-memory-and-rag/) freshness
-bug. Grounding still caught "the chunk never said that."
+chunk is stale. That is a freshness bug in the retrieval store.
+Grounding still caught "the chunk never said that."
 
 Ungrounded is the failure mode users call hallucination when
 they trusted your "ask the handbook" banner.
 
-**Problem** — Persona says "only use the documents" and you stop
-there.
-
-**Solution** — Give the checker the **same context** the generator
-saw. Personas leak. Checkers that cannot see the passages are
-grading vibes.
+A persona that says "only use the documents" and stops there
+still leaks. Give the checker the **same context** the generator
+saw. Checkers that cannot see the passages are grading vibes.
 
 Grounding is reusable. A critic can demand sources. A support
 agent can ground in ticket fields. The RAG case is the cleanest
@@ -421,10 +389,9 @@ context."
 
 ### Grounding as a guardrail
 
-[Ch. 4](../4-multi-agent-systems/) introduced guardrails as
-control. Here the **output guardrail** is a grounding agent:
-if `grounded` is false, trip a wire, throw, or substitute a
-safe reply.
+Guardrails are control points on agent output. Here the **output
+guardrail** is a grounding agent: if `grounded` is false, trip a
+wire, throw, or substitute a safe reply.
 
 That is stronger than a critic comment the generator can ignore.
 It is also how you halt a fluent lie before the user sees it.
@@ -443,19 +410,17 @@ It is also how you halt a fluent lie before the user sees it.
       tripwire: block or regenerate (with a retry budget)
 ```
 
-**Problem** — Guardrail and generator share a prompt cache of
-bad habits, or the guardrail uses a weaker model that rubber-
-stamps.
+When the guardrail and generator share a prompt cache of bad
+habits, or the guardrail uses a weaker model that rubber-stamps,
+the tripwire is theater. Separate agent, typed schema, logged
+`output_info` (the boolean and the feedback). Sample blocked
+answers weekly. A tripwire that never fires is untested. A
+tripwire that always fires is a broken retriever or a sadistic
+judge.
 
-**Solution** — Separate agent, typed schema, logged `output_info`
-(the boolean and the feedback). Sample blocked answers weekly.
-A tripwire that never fires is untested. A tripwire that always
-fires is a broken retriever or a sadistic judge.
-
-Platform-shaped policy (PII, injection, which tools exist) is
-[platform ch. 6](../../platform/6-tools-and-guardrails/) —
-mention only. This chapter's guardrail is **claim vs context**,
-not IAM.
+Platform-shaped policy (PII, injection, which tools exist) is a
+different control plane. This chapter's guardrail is **claim vs
+context**.
 
 ### Rubrics
 
@@ -470,12 +435,10 @@ does not have one right string. Quality is multi-axis. A
 means. Humans can apply it. So can a critic model, with the
 caveats already named.
 
-**Problem** — Defaulting every eval to "LLM-as-judge with a vibe."
-
-**Solution** — Split the artifact. Score the structured parts
-with numbers. Score the prose with a rubric. If a criterion
-cannot be written so two engineers would agree, it is not a
-criterion yet.
+Defaulting every eval to "LLM-as-judge with a vibe" skips the
+split. Score the structured parts with numbers. Score the prose
+with a rubric. If a criterion cannot be written so two engineers
+would agree, it is not a criterion yet.
 
 A usable rubric is short, operational, and hostile to poetry:
 
@@ -517,13 +480,11 @@ the generator from grading its own homework.
                      fail --> feedback --> retry or block
 ```
 
-**Problem** — Putting the style guide only in the generator
-prompt and skipping the critic because "the model read it."
-
-**Solution** — Models do not reliably obey long constraint
-lists. A second pair of weights, with a rubric and no
-generation job, catches misses. Measure the critic against
-human labels on a handful of artifacts or you will ship a
+Putting the style guide only in the generator prompt and skipping
+the critic because "the model read it" trusts long constraint lists
+that models do not reliably obey. A second pair of weights, with a
+rubric and no generation job, catches misses. Measure the critic
+against human labels on a handful of artifacts or you will ship a
 taste dictator.
 
 Critics have taste drift too. Version the rubric in git.
@@ -559,11 +520,10 @@ violation.
             |-- annotations (human labels)
 ```
 
-[Platform ch. 7](../../platform/7-observability/) is how a
-*fleet* stores traces, cost, scores, and A/B. Do not merge
-that service design into this README. Phoenix here is **the
-notebook you attach to the Agents SDK (or similar) while you
-practice TDAD**.
+Fleet-wide observability — org datasets, cost as a first-class
+signal, A/B across services — is a platform concern. Phoenix here
+is **the notebook you attach to the Agents SDK (or similar) while
+you practice TDAD**.
 
 ### Connecting
 
@@ -636,18 +596,13 @@ judges, or your grounding/critic agents pointed at stored
 inputs. Start with one number you believe. A dashboard with
 twelve unevaluated sliders is decoration.
 
-**Problem** — Evaluating every span including "hi" and tool
-acks.
-
-**Solution** — Dataset membership is a product choice. Prefer
-spans that are *answers* or *tool decisions*. Measuring
-greetings will make your pass rate look like a mood ring.
+Evaluating every span including "hi" and tool acks makes the
+pass rate look like a mood ring. Dataset membership is a product
+choice. Prefer spans that are *answers* or *tool decisions*.
 
 This experiment loop is the agent-level cousin of platform
-experimentation (datasets, online vs offline, A/B in
-[platform ch. 7](../../platform/7-observability/)). Same
-scientific instinct — change one thing, keep a holdout —
-different owner.
+experimentation. Same scientific instinct — change one thing,
+keep a holdout — different owner.
 
 ### Annotations
 
@@ -665,43 +620,15 @@ Workflow:
 3. Use those labels to calibrate judges, to build a harder
    dataset, or to teach a new evaluator.
 
-**Problem** — Only the original author annotates, and only on
-days the demo broke.
-
-**Solution** — A thin queue: sample N traces per day, two
-reviewers when the criterion is subjective. Disagreement is
-data. If two humans cannot apply the rubric, the critic cannot
-either.
+Only the original author annotating, and only on days the demo
+broke, leaves you with a biased sample. A thin rule: sample N
+traces per day, two reviewers when the criterion is subjective.
+Disagreement is data. If two humans cannot apply the rubric, the
+critic cannot either.
 
 Annotations are how thumbs become a training and eval signal
 instead of a support ticket emoji. They do not replace
 benchmarks. They catch what the table never asked.
-
-## Where this chapter stops
-
-You now have the agent-shaped eval map:
-
-- in-loop Learn vs around-loop suites,
-- TDAD: spec first, fail, smallest change, repeat,
-- harnesses from string match to typed evaluator agents,
-- grounding (especially RAG), including as a guardrail,
-- rubrics and critic agents for open-ended work,
-- Phoenix as traces, sessions, datasets, evaluators,
-  annotations.
-
-What you do **not** have yet: Docker, runtimes, threat models,
-or cost routing. That is deployment.
-
-What this folder will not become: an observability platform.
-When you need cross-service correlation, cost as a first-class
-signal, org datasets, and A/B, leave this directory:
-
-- [platform ch. 7 — Observability](../../platform/7-observability/)
-  (traces, scores, datasets, annotation queues, A/B)
-
-Keep Phoenix (or whatever collector you chose) as the way
-*this* agent becomes inspectable while you still own the
-benchmarks in git.
 
 ## Check yourself
 
@@ -722,7 +649,7 @@ benchmarks in git.
    example each from a system you know.
 6. Grounding vs truth: a chunk says an outdated fare. The
    agent repeats it. Does a grounding agent pass or fail, and
-   which chapter owns the fix?
+   what owns the freshness fix?
 7. Sketch output-guardrail grounding with a tripwire. What
    do you log when it fires, and how do you catch a judge
    that blocks paraphrases of a real chunk?
@@ -736,5 +663,3 @@ benchmarks in git.
     experiment looks noisy. How do you choose spans, what
     metadata must be on them, and when do annotations matter
     more than another LLM judge?
-
-Continue to [Deploying agents](../8-deploying-agents/).

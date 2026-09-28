@@ -1,13 +1,8 @@
 # Agents track
 
 Companion notes for **Micheal Lanham, *AI Agents in Action*, 2nd edition**
-(Manning, 2026). This track stays on **how an agent is put together**.
-
-The other books in this workshop — *Designing AI Systems* and *Hands-On
-Machine Learning* — live in [`../platform/`](../platform/) and
-[`../ml/`](../ml/). Shared words (MCP, memory, RAG, eval, embedding,
-deploy) are **not** merged here. Use [`../INDEX.md`](../INDEX.md) when you
-need the other angle.
+(Manning, 2026). This track is **how an agent is put together**. Each
+folder below is one chapter, and that chapter's note stands on its own.
 
 | Folder | AIA ch. |
 |---|---|

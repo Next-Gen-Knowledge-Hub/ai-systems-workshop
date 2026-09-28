@@ -4,21 +4,13 @@ Companion notes for **Chapter 18** of *Hands-On Machine Learning with
 Scikit-Learn, Keras, and TensorFlow* (2nd edition, Aurélien Géron;
 O'Reilly, 2019).
 
-[Chapter 17](../17-autoencoders-gans/) learned from unlabeled *datasets*.
-This chapter learns from **interaction**: an agent takes actions, the
-environment answers with a next state and a number, and the agent
-updates a **policy** so that the discounted sum of numbers goes up.
-Skip it and you will call every loop that "does something" reinforcement
-learning, ship a Q-table that cannot see pixels, or worse, file an LLM
-tool loop under Bellman and then wonder why there is no reward tensor.
-
-**See also (do not merge):** [agents ch. 1](../../agents/1-rise-of-ai-agents/)
-defines agency as sense–plan–act–learn around **tools and goals**.
-[Agents ch. 9](../../agents/9-agentic-loop/) is three nested **LLM**
-loops (inner SPAL, task loop, meta loop). This folder stays on
-**MDPs, returns, and value / policy algorithms**. Gym + DQN is not
-MCP + ReAct. The word "agent" is the overlap. The algorithms are not.
-Rows: [`TRADEOFFS.md`](../../TRADEOFFS.md) ("RL agent vs LLM agent").
+Unsupervised chapters learn from unlabeled *datasets*. This chapter
+learns from **interaction**: an agent takes actions, the environment
+answers with a next state and a number, and the agent updates a
+**policy** so that the discounted sum of numbers goes up. Skip it and
+you will call every loop that "does something" reinforcement learning,
+ship a Q-table that cannot see pixels, or file a language-model tool
+loop under Bellman and then wonder why there is no reward tensor.
 
 ## The mental model
 
@@ -40,8 +32,7 @@ Rows: [`TRADEOFFS.md`](../../TRADEOFFS.md) ("RL agent vs LLM agent").
 ```
 
 The one sentence to remember a year from now: **an RL agent maximises a
-scalar reward by changing a policy; an LLM agent chooses tools in
-language space with no Bellman update unless you add one on purpose.**
+scalar reward by changing a policy through value or policy updates.**
 
 Supervised learning: `(x, y)` from a frozen dataset. RL: `y` is missing;
 you only get `r`, often later, and your actions **change which data you
@@ -50,21 +41,19 @@ rewards."
 
 ## Learning to optimize rewards
 
-**Problem** — You can specify what you want as a **number per step**
-(or per episode), not as a labeled action for every state.
+You can specify what you want as a **number per step** (or per
+episode), not as a labeled action for every state. Design a reward.
+The agent maximises expected return. This is a product decision
+pretending to be an algorithm decision. Dense rewards ("+1 for
+progress") are easy to learn and easy to game. Sparse rewards ("+1
+only if the pole is still up at step 500") match the spec and starve
+the learner.
 
-**Solution** — Design a reward. The agent maximises expected return.
-This is a product decision pretending to be an algorithm decision.
-Dense rewards ("+1 for progress") are easy to learn and easy to game.
-Sparse rewards ("+1 only if the pole is still up at step 500") match
-the spec and starve the learner.
-
-**Failure mode** — Reward hacking. The agent maximises *what you
-wrote*, not what you meant (infinite loops of a cheap +0.1, sitting
-still if motion is penalised, dying on purpose if death resets a
-painful state). If you cannot name how the policy could cheat, you
-have not finished the spec. This is not an LLM jailbreak. It is a
-misspecified scalar.
+**Reward hacking** is the agent maximising *what you wrote*, not what
+you meant (infinite loops of a cheap +0.1, sitting still if motion is
+penalised, dying on purpose if death resets a painful state). If you
+cannot name how the policy could cheat, you have not finished the
+spec. This is a misspecified scalar.
 
 ## Policy search
 
@@ -76,10 +65,10 @@ strategies, later gradients.
 You do not have to learn a value function. You can search directly in
 policy space. That idea returns as policy gradients below.
 
-**Failure mode** — Searching a high-dimensional neural policy with
-vanilla random perturbations and no baseline. The noise drowns the
-signal. This is why the chapter bothers with credit assignment and
-gradients instead of "just try bigger weights."
+Searching a high-dimensional neural policy with vanilla random
+perturbations and no baseline drowns the signal in noise. This is why
+the chapter bothers with credit assignment and gradients instead of
+"just try bigger weights."
 
 ## OpenAI Gym (vintage)
 
@@ -97,29 +86,26 @@ That is the whole contract this chapter needs: reset, step, a flag
 when the episode is over. The environment is a **simulator or a game
 wrapper**, not a customer-support runtime.
 
-**Failure mode** — Treating Gym as production infrastructure. It is a
+Treating Gym as production infrastructure is a mistake. It is a
 research interface. Seeds, wrappers, and "done" semantics were already
 messy in 2019; they got a cleanup later (see **What aged**). Do not
 build a company on `env.render()`.
 
 ## Neural network policies
 
-**Problem** — The observation is a vector (or pixels). A table of
-actions per discrete state will not fit.
+The observation is a vector (or pixels). A table of actions per
+discrete state will not fit. A net outputs action logits or means.
+For CartPole-class problems a two-layer MLP that maps observation →
+probability of "left" vs "right" is enough to *illustrate* a policy.
+You sample an action, step the environment, collect the trajectory.
 
-**Solution** — A net outputs action logits or means. For CartPole-class
-problems a two-layer MLP that maps observation → probability of "left"
-vs "right" is enough to *illustrate* a policy. You sample an action,
-step the environment, collect the trajectory.
+Pixels need convolutional layers. This chapter's first nets are small
+on purpose so you can see the RL plumbing.
 
-Pixels need the conv vocabulary from [ch. 14](../14-cnns/). This
-chapter's first nets are small on purpose so you can see the RL
-plumbing.
-
-**Failure mode** — A huge conv net on CartPole. You cannot debug the
-algorithm if the model is also a research project. Another: a
-deterministic argmax policy during **training** in a method that needs
-exploration. You stopped exploring; you started repeating one action.
+A huge conv net on CartPole makes the algorithm undebuggable because
+the model is also a research project. A deterministic argmax policy
+during **training** in a method that needs exploration stops
+exploring; you start repeating one action.
 
 ## The credit assignment problem
 
@@ -131,30 +117,28 @@ Monte Carlo style: wait until the episode ends, compute the return
 from each step, push the policy toward actions that sat on high
 returns. Unbiased, high variance, slow if episodes are long.
 
-**Failure mode** — Rewarding every action in a winning episode equally.
-The random twitch before the good move gets the same credit. Variance
-explodes; learning looks like luck.
+Rewarding every action in a winning episode equally credits the
+random twitch before the good move the same as the good move.
+Variance explodes; learning looks like luck.
 
 ## Policy gradients
 
-**Problem** — You want to climb expected return with a neural policy
-and you cannot differentiate through the environment.
-
-**Solution** — The REINFORCE-class identity: increase the log-probability
-of actions that were followed by a high return, decrease it when the
-return was poor. A **baseline** (often a learned value `V(s)`) subtracts
-out "how good is this state anyway?" so you credit the *advantage*, not
-the raw return.
+You want to climb expected return with a neural policy and you cannot
+differentiate through the environment. The REINFORCE-class identity:
+increase the log-probability of actions that were followed by a high
+return, decrease it when the return was poor. A **baseline** (often a
+learned value `V(s)`) subtracts out "how good is this state anyway?"
+so you credit the *advantage*, not the raw return.
 
 This is on-policy: the data has to come from the policy you are
 updating (or you need a correction this chapter does not make you
 implement first).
 
-**Failure mode** — No baseline, huge returns, a single lucky episode
-drags the whole net. Or a learning rate that steps the policy so far
-that the next batch of trajectories is from a different agent and the
-gradient is fiction. Later algorithms (PPO, TRPO) exist *because* this
-failure is the default.
+No baseline, huge returns, and a single lucky episode can drag the
+whole net. Or a learning rate that steps the policy so far that the
+next batch of trajectories is from a different agent and the gradient
+is fiction. Later algorithms (PPO, TRPO) exist *because* this failure
+is the default.
 
 ## Markov decision processes
 
@@ -181,9 +165,9 @@ Bellman equations relate `V` / `Q` at `s` to the same functions at
 them when you **know** `P` and `R` and the state space is small.
 The rest of the chapter is what you do when you do not.
 
-**Failure mode** — Calling a non-Markov observation a state and then
-blaming Q-learning. Also: `γ = 1` on a continuing task with positive
-rewards and then wondering why values explode.
+Calling a non-Markov observation a state and then blaming Q-learning
+is a common mistake. Also: `γ = 1` on a continuing task with positive
+rewards makes values explode.
 
 ## Temporal difference learning and Q-learning
 
@@ -202,9 +186,8 @@ a spreadsheet.
 
 ### Approximate Q and DQN
 
-**Problem** — Too many states (pixels). Tables do not fit.
-
-**Solution** — A neural net `Q(s, a; θ)`. Naive "TD on a net" diverges:
+Too many states (pixels). Tables do not fit. A neural net
+`Q(s, a; θ)` approximates the table. Naive "TD on a net" diverges:
 consecutive samples are correlated, the target moves every step, and
 bootstrap plus function approximation plus off-policy is the deadly
 triad.
@@ -220,11 +203,11 @@ minimum kit:
 You still need exploration. You still need to stack frames if a single
 image is not Markov.
 
-**Failure mode** — Replay buffer of size 1000 on Atari, or size
-10 million on CartPole. Mismatch the buffer to the task and you either
-overfit yesterday's five transitions or train on ancient policies
-forever. Another: updating the target net every step (you did not have
-a target net) or never (the target is a random init).
+A replay buffer of size 1000 on Atari, or size 10 million on CartPole,
+mismatches the task: you either overfit yesterday's five transitions
+or train on ancient policies forever. Updating the target net every
+step (you did not have a target net) or never (the target is a random
+init) both undo the recipe.
 
 ## DQN variants
 
@@ -235,17 +218,16 @@ paper:
   DQN is often just "unstable Q-approx."
 - **Double DQN.** The online net *selects* `argmax a'`; the target net
   *evaluates* that action. Cuts the systematic overestimate of
-  `max Q`. Failure if skipped: optimistic Q, policies that chase
-  phantom high values.
+  `max Q`. Skipped: optimistic Q, policies that chase phantom high
+  values.
 - **Prioritized experience replay (PER).** Sample transitions with
   large TD error more often (plus importance weights so the bias is
-  not silent). Failure if skipped: the buffer is dominated by easy,
-  useless transitions. Failure if mis-tuned: you overfit a handful of
-  noisy errors.
+  not silent). Skipped: the buffer is dominated by easy, useless
+  transitions. Mis-tuned: you overfit a handful of noisy errors.
 - **Dueling DQN.** Split the net into `V(s)` and advantage `A(s, a)`,
   recombine into Q. Helps when many actions share a state value and
-  only some of them matter. Failure if skipped: not always fatal;
-  dueling is a capacity prior, not a new objective.
+  only some of them matter. Skipping is not always fatal; dueling is
+  a capacity prior, not a new objective.
 
 You can stack these. You should still be able to name the job of each
 knob when the run looks cursed.
@@ -279,10 +261,10 @@ Sketch of the moving parts, not a how-to:
 - **Training loop.** Sample, compute TD loss, apply gradients, sync
   target nets, decay ε, log.
 
-**Failure mode** — Copy-pasting a 2019 TF-Agents notebook into a 2026
-product. The *architecture* (env, replay, collector, learner) is still
-how every serious RL codebase looks. The library name on the import
-line is not. See **What aged**.
+Copy-pasting a 2019 TF-Agents notebook into a 2026 product is the wrong
+move. The *architecture* (env, replay, collector, learner) is still how
+every serious RL codebase looks. The library name on the import line is
+not. See **What aged**.
 
 ## Survey of other algorithms (names and jobs)
 
@@ -318,20 +300,20 @@ a headache when `a` is a torque vector. That is why DDPG/TD3/SAC exist.
   will pick the wrong tool on MuJoCo-shaped tasks.
 - **Simulators.** MuJoCo licensing eased; Isaac / Brax / other GPU
   sims showed up. Atari remains a benchmark, not a product.
-- **The word "agent" collided with LLMs.** RLHF / RLAIF use RL
-  *on* language models as a **training** method (reward model + PPO
-  or a DPO-class substitute). That is still this chapter's family:
-  a policy, a scalar, an update. It is **not** [agents ch. 9](../../agents/9-agentic-loop/).
-  Do not merge "we PPO'd the chatbot" with "we deployed a tool loop."
+- **RL on language models.** RLHF / RLAIF use RL *on* language models
+  as a **training** method (reward model + PPO or a DPO-class
+  substitute). That is still this chapter's family: a policy, a
+  scalar, an update. Shipping a tool-calling chat loop is a different
+  job.
 - **Still teach Bellman and Q here.** Flashy algorithms are wrappers
   around `V`, `Q`, advantage, and a replay or a trajectory batch.
   If those four are fog, PPO will also be fog.
 
 ## Check yourself
 
-1. Write one sentence that distinguishes an RL agent from an LLM
-   agent in this workshop. Which two Agents-track chapters do you
-   *not* rewrite here?
+1. Write one sentence that says what an RL agent maximises and what
+   it updates. How does that differ from supervised learning on a
+   fixed `(x, y)` dataset?
 2. Give a reward that is easy to learn and a way an agent could hack
    it. Then give a sparser reward and say what dies in the learning
    signal.
@@ -353,5 +335,3 @@ a headache when `a` is a torque vector. That is why DDPG/TD3/SAC exist.
 10. TF-Agents: list env, spec, wrapper, replay, driver, training
     loop. Which of those still exist if you throw the library away
     in 2026, and which name in **What aged** replaced Gym?
-
-Continue to [Training and Deploying TensorFlow Models at Scale](../19-scale-and-deploy/).

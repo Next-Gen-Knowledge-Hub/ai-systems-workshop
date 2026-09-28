@@ -4,26 +4,13 @@ Companion notes for **Chapter 3** of *Hands-On Machine Learning with
 Scikit-Learn, Keras, and TensorFlow* (2nd edition, Aurélien Géron;
 O'Reilly, 2019).
 
-This chapter is how you **measure a decision**, using a
-many-class image set (MNIST-shaped: one digit per row) as the running
-picture, then the same math on any labeled table. Skip it and you
-will ship on **accuracy**, celebrate a 97% that never caught the rare
-class, and argue about "the model is bad" when you have not even
-picked an **operating point**. Regression RMSE from
-[ch. 2](../2-end-to-end-project/) does not save you here. A class is
-a decision, and decisions have different costs.
-
-**See also (do not merge).** Agent evaluation is traces, rubrics,
-grounding, and LLM-as-judge —
-[agents ch. 7](../../agents/7-evaluation-and-feedback/). Platform
-scores, datasets, and A/B are
-[platform ch. 7](../../platform/7-observability/). A confusion matrix
-does not tell you whether an agent refunded the wrong order. A
-Phoenix trace does not tell you whether a digit classifier is
-calibrated. If you have both jobs, read both folders; do not paste
-judges into `sklearn.metrics`. Rows:
-[`TRADEOFFS.md`](../../TRADEOFFS.md) ("Hold-out metrics vs judges vs
-platform scores").
+This chapter is how you **measure a decision**, using a many-class
+image set (MNIST: one handwritten digit per 28×28 row) as the running
+picture, then the same math on any labeled table. Skip it and you will
+ship on **accuracy**, celebrate a 97% that never caught the rare class,
+and argue about "the model is bad" when you have not even picked an
+**operating point**. A class is a decision, and decisions have
+different costs.
 
 ## The mental model
 
@@ -58,22 +45,22 @@ matrix is the object; the threshold is a product choice.**
 
 Two consequences. First, "we got 99%" on a 1% fraud rate can mean
 "we predicted nobody is fraud." Second, precision and recall move in
-opposite directions when you slide `t`. You do not "fix both" with a
-prettier color bar. You pick a point and own the misses.
+opposite directions when you slide `t`. You pick a point and own the
+misses.
 
 ## A binary classifier
 
-MNIST-shaped work starts as **one digit vs the rest** (a "5-detector"
-is the usual cartoon) because binary metrics are easier to *see*.
-The same pattern is everywhere: defect vs not, churn vs not,
-"this login is stolen" vs not.
+MNIST work starts as **one digit vs the rest** (a "5-detector") because
+binary metrics are easier to *see*. About one tenth of the digits are
+5s, so the negative class dominates — the same shape as defect vs not,
+churn vs not, "this login is stolen" vs not.
 
 You need:
 
 - a **scoring** model (decision function or probability),
 - a **threshold**,
-- a **split** that respects [ch. 1](../1-ml-landscape/) (no peeking)
-  and [ch. 2](../2-end-to-end-project/) (pipeline-safe CV).
+- a **split** that hides the test set and keeps transformers inside
+  the CV loop.
 
 ```python
 from sklearn.linear_model import SGDClassifier
@@ -84,18 +71,14 @@ clf = SGDClassifier(random_state=0)
 y_pred = cross_val_predict(clf, X_train, y_binary, cv=3)
 ```
 
-`cross_val_predict` is the habit: every row's predicted label (or
-score) comes from a model that did not train on that row. Training-set
+`SGDClassifier` fits a linear classifier with stochastic gradient
+descent. `cross_val_predict` returns, for every training row, the
+label (or score) from a fold that did not include that row. Training-set
 accuracy of a model that saw those rows is a vanity metric.
 
-**Problem** — The demo classifies ten digits, so the team jumps to
-multiclass dashboards.
-
-**Solution** — Get binary hygiene first: a matrix, a PR curve, a
-chosen `t`. Multiclass is several of these stories glued together.
-
-**Failure mode to recognise** — Reporting train accuracy of a
-nonlinear model on digits (or on tickets) as if it were a test.
+The demo classifies ten digits, so teams jump to multiclass
+dashboards. Get binary hygiene first: a matrix, a PR curve, a chosen
+`t`. Multiclass is several of these stories glued together.
 
 ## The accuracy trap
 
@@ -103,15 +86,16 @@ nonlinear model on digits (or on tickets) as if it were a test.
 when classes are balanced and costs are symmetric. It is a trap when
 one class is rare or when FN and FP have different prices.
 
-A dummy that always says "not-5" (or "not fraud") is extremely
-accurate and completely useless.
+Walk the rare-positive intuition. Suppose 100 login attempts, and 2
+are stolen. A dummy that always says "not fraud" gets 98 right and 2
+wrong: **98% accuracy**, zero fraud caught. A useful detector that
+flags 5 attempts, of which 2 are real fraud and 3 are false alarms,
+has accuracy 95/100 = **95%** — *worse* on accuracy, and the only one
+that did the job. Always print the **base rate** next to accuracy. If
+they are close, the model may not be doing anything.
 
-**Failure mode to recognise** — A launch review that only prints
-accuracy, plus a class balance of 1:50. You have not measured the
-product. You have measured the prior.
-
-Always print the **base rate** next to accuracy. If they are close,
-the model may not be doing anything.
+A launch review that only prints accuracy, plus a class balance of
+1:50, has measured the prior.
 
 ## Confusion matrix, precision, recall, F1
 
@@ -122,17 +106,21 @@ The confusion matrix is four counts for a chosen threshold:
 | **true +** | TP | FN |
 | **true −** | FP | TN |
 
-- **Precision** — of the rows you flagged, how many deserved it.
-  High precision: you rarely cry wolf. Search "show me the 5s" wants
-  this if a false 5 wastes an operator.
-- **Recall** (sensitivity, true-positive rate) — of the rows that
-  deserved a flag, how many you caught. High recall: few leaks. Cancer
-  screening, fraud holds, safety defects want this more than a pretty
-  precision.
-- **F1** — harmonic mean of precision and recall. It punishes the
-  worse of the two. Useful as a *single* number when you need to sort
-  models and have no cost ratio yet. It is not a business license to
-  ignore which error hurts.
+On the same 100-login toy: TP = 2, FP = 3, FN = 0, TN = 95.
+
+- **Precision** asks: of the rows you flagged, how many deserved it?
+  Here precision = 2 / (2+3) = **0.40**. High precision means you rarely
+  cry wolf. Search "show me the 5s" wants this if a false 5 wastes an
+  operator.
+- **Recall** (sensitivity, true-positive rate) asks: of the rows that
+  deserved a flag, how many you caught? Here recall = 2 / (2+0) =
+  **1.0**. High recall means few leaks. Cancer screening, fraud holds,
+  safety defects want this more than a pretty precision.
+- **F1** is the harmonic mean of precision and recall:
+  `2 × P × R / (P + R)`. It punishes the worse of the two. On the toy,
+  F1 ≈ 0.57. Useful as a *single* number when you need to sort models
+  and have no cost ratio yet. It is not a business license to ignore
+  which error hurts.
 
 ```python
 from sklearn.metrics import (
@@ -145,21 +133,19 @@ r = recall_score(y_binary, y_pred)
 f = f1_score(y_binary, y_pred)
 ```
 
-**Problem** — Stakeholders hear "F1" and stop asking who pays for FN.
-
-**Solution** — Put **costs** on FP and FN (even roughly: operator
-minutes vs missed fraud dollars). F1 is a convenience, not a utility.
-
-**Failure mode to recognise** — Optimizing F1 while production
-thresholds on a different score (marketing wants volume; risk wants
-precision). The number you tuned is not the number the system uses.
+`confusion_matrix` counts the four cells. The three score helpers
+compute P, R, and F1 from those counts (or equivalent). Stakeholders
+who hear "F1" and stop asking who pays for FN need **costs** on FP and
+FN (even roughly: operator minutes vs missed fraud dollars). Optimizing
+F1 while production thresholds on a different score (marketing wants
+volume; risk wants precision) tunes a number the system never uses.
 
 ## The precision/recall trade-off
 
 Most classifiers emit a **score**. You pick `t`. Raising `t` typically
 **raises precision and lowers recall**. Lowering `t` does the
-opposite. That is not a bug. It is the geometry of ranking positives
-ahead of negatives, then cutting the list.
+opposite. That is the geometry of ranking positives ahead of negatives,
+then cutting the list.
 
 ```
   score high  ----------------  score low
@@ -167,6 +153,10 @@ ahead of negatives, then cutting the list.
                          t
   move t right --> more flags, more FP, recall up, precision down
 ```
+
+On the 5-detector, a high threshold says "only shout when you are very
+sure this is a 5": few false 5s (precision up), many real 5s missed
+(recall down). A low threshold floods the queue with candidates.
 
 The **PR curve** is precision as a function of recall (or vs
 threshold). Use it when positives are rare: it stays honest about the
@@ -177,10 +167,9 @@ similar.
 **Average precision** (area under PR, with care) is a threshold-free
 summary of that curve. Still pick a `t` for production.
 
-**Failure mode to recognise** — Quoting precision at the default
-`t=0.5` for a model whose scores are not probabilities, or whose
-probabilities are uncalibrated. `0.5` is a convention, not a law.
-SGD-style decision functions are not "50% chance."
+Quoting precision at the default `t=0.5` for a model whose scores are
+not probabilities, or whose probabilities are uncalibrated, treats a
+convention as a law. SGD-style decision functions are not "50% chance."
 
 ```python
 from sklearn.metrics import precision_recall_curve
@@ -190,6 +179,11 @@ scores = cross_val_predict(clf, X_train, y_binary, cv=3,
 prec, rec, thresh = precision_recall_curve(y_binary, scores)
 # pick t from the curve for a recall floor, then freeze it
 ```
+
+`method="decision_function"` asks each CV fold for the raw score
+instead of a hard label. `precision_recall_curve` walks every
+threshold and returns the precision/recall pairs so you can pick `t`
+for a recall floor and freeze it.
 
 ## ROC and AUC
 
@@ -201,16 +195,14 @@ higher than a random negative (for a well-behaved scorer).
 ROC/AUC is handy when you care about **ranking** and classes are not
 pathologically rare. When positives are rare, FPR can look tiny
 because TN is huge: a "great AUC" with a useless PR curve in the
-region you operate. **Prefer PR for imbalanced detection.** Prefer
-ROC when both classes are real populations you care about (digit vs
-digit, two medical conditions of similar prevalence).
+region you operate. Prefer PR for imbalanced detection. Prefer ROC
+when both classes are real populations you care about (digit vs digit,
+two medical conditions of similar prevalence).
 
-**Failure mode to recognise** — "AUC 0.99" on 0.2% positives, no PR
-plot, threshold left at default. You ranked well on average and still
-flooded the queue — or never filled it.
-
-Do not compare AUC across tasks with different base rates as if it
-were a universal IQ.
+"AUC 0.99" on 0.2% positives, no PR plot, threshold left at default,
+means you ranked well on average and still flooded the queue — or never
+filled it. Do not compare AUC across tasks with different base rates
+as if it were a universal IQ.
 
 ## Multiclass: OvR and OvO
 
@@ -225,19 +217,18 @@ two labels. Strategies:
   trained on a smaller slice. Historically attractive for learners
   that hate big sets (classic SVMs).
 
-Some estimators are **inherently multiclass** (softmax in
-[ch. 4](../4-training-models/), trees, many boosting models). sklearn
-will wrap the others. You still own the **metric**: macro vs micro vs
-weighted F1, and a **confusion matrix that is N×N**.
+Some estimators are **inherently multiclass** (softmax logistic
+regression, trees, many boosting models). sklearn will wrap the
+others. You still own the **metric**: macro vs micro vs weighted F1,
+and a **confusion matrix that is N×N**.
 
 ```
   OvR:  [is 0?] [is 1?] ... [is 9?]   --> argmax score
   OvO:  [0 vs 1] [0 vs 2] ...         --> majority vote
 ```
 
-**Failure mode to recognise** — Reporting "accuracy 94%" on digits
-and missing that 4 vs 9 is a systematic tangle. The number is an
-average over easy classes.
+Reporting "accuracy 94%" on digits and missing that 4 vs 9 is a
+systematic tangle averages over easy classes.
 
 ### Error analysis
 
@@ -251,11 +242,9 @@ did they go?), is the debugging tool. You are looking for:
 
 Then you decide whether the fix is **data** (more messy 4s),
 **features** (a stroke detector, a header field), or **the decision
-rule** (don't force a single label; abstain).
-
-**Failure mode to recognise** — Collecting more data at random
-instead of more data *on the confused pair*. Average accuracy will
-barely move; the pair will.
+rule** (don't force a single label; abstain). Collecting more data at
+random instead of more data *on the confused pair* barely moves
+average accuracy; the pair stays tangled.
 
 ## Multilabel and multioutput
 
@@ -274,11 +263,11 @@ vector**. Your split, leakage, and per-output metrics still apply.
 Do not collapse to a single accuracy unless the product is
 all-or-nothing.
 
-**Failure mode to recognise** — Training one softmax over a cartesian
-product of tags ("refund+legal", "refund+not-legal", ...) until the
-label space explodes, instead of a multilabel head. Or the reverse:
-independent labels that are actually mutually exclusive (a digit is
-not both 3 and 5).
+Training one softmax over a cartesian product of tags
+("refund+legal", "refund+not-legal", ...) until the label space
+explodes fights multilabel reality. Independent labels that are
+actually mutually exclusive (a digit is not both 3 and 5) need a
+single multiclass head instead.
 
 ```python
 from sklearn.multioutput import MultiOutputClassifier
@@ -288,6 +277,10 @@ from sklearn.ensemble import RandomForestClassifier
 multi = MultiOutputClassifier(RandomForestClassifier(n_estimators=50))
 # multi.fit(X_train, Y_train)   # Y_train has several columns
 ```
+
+`MultiOutputClassifier` fits one forest per output column. That is
+independent heads sharing the same X; it does not invent a joint
+label space for you.
 
 ## What aged since 2019
 
@@ -303,13 +296,9 @@ multi = MultiOutputClassifier(RandomForestClassifier(n_estimators=50))
 - Digit recognition as a *research* problem is saturated. As a
   *teaching* problem it is still the cleanest way to see a matrix.
   Your real matrix is tickets, transactions, or defects — same
-  arithmetic. Judges and trace scores for generative apps live in
-  the See-also folders, not in `sklearn.metrics`.
+  arithmetic.
 
 ## Check yourself
-
-Good answers need the takeaway, the failure mode, and a labeled
-system you have actually touched.
 
 1. Quote an accuracy you have seen in a review. What was the base
    rate, and what dummy policy would have matched it?
@@ -332,11 +321,6 @@ system you have actually touched.
 8. A ticket can carry several tags. Is that multiclass, multilabel,
    or a cartesian monster? What metric would lie if you used
    all-or-nothing accuracy?
-9. Why is `cross_val_predict` the matrix you want, not
+9. Why is `cross_val_predict` the matrix you want, rather than
    `predict` on the training frame? Point at a vanity number you have
    actually seen.
-10. An agent team wants to "reuse chapter-3 metrics" on a chatbot.
-    What object is missing (a gold label per row vs a judge on a
-    trace), and which folder owns that job instead?
-
-Continue to [Training models](../4-training-models/).

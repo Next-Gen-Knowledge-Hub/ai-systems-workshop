@@ -4,18 +4,14 @@ Companion notes for **Chapter 14** of *Hands-On Machine Learning with
 Scikit-Learn, Keras, and TensorFlow* (2nd edition, Aurélien Géron;
 O'Reilly, 2019).
 
-[Chapter 11](../11-training-dnns/) taught you to train deep stacks.
-This chapter is the stack that *fits images*: convolution, pooling,
-the architectures that made ImageNet a solved-enough demo, and the
-jump from a class score to a box or a mask. Skip it and you will
-flatten a 256×256 photo into a dense MLP, OOM, then download a
-vision API and call that "our CNN."
-
-**See also (do not merge):** transfer of a *vision backbone you
-fine-tune* is this chapter plus [ch. 11](../11-training-dnns/).
-Calling a frozen multimodal API is
-[agents ch. 2](../../agents/2-llms-prompting-agents/). Do not
-rewrite detection as an agent tool chapter.
+Training deep stacks is general machinery. This chapter is the stack
+that *fits images*: convolution, pooling, the architectures that made
+ImageNet a solved-enough demo, and the jump from a class score to a
+box or a mask. Skip it and you will flatten a 256×256 photo into a
+dense MLP, OOM, then download a vision API and call that "our CNN."
+Transfer of a vision backbone you fine-tune is this chapter plus the
+freeze-then-unfreeze recipe. Calling a frozen multimodal API is a
+different job.
 
 ## The mental model
 
@@ -66,9 +62,9 @@ engineering translation:
 - **Many filters** → many feature maps.
 - **Subsampling** → pooling / stride.
 
-**Failure mode** — treating the cartoon as a proof that your
-net "sees like a human." It sees like a stack of correlations
-trained on your labels.
+Treating the cartoon as a proof that your net "sees like a human"
+overclaims. It sees like a stack of correlations trained on your
+labels.
 
 ## Convolutional layers
 
@@ -85,15 +81,18 @@ the "pixels" become "patterns of patterns."
   output[h, w, k] = < input patch at (h, w) , filter_k > + b_k
 ```
 
-**Problem** — A Dense layer on `H*W*C` inputs is too many
-weights and ignores that a cat shifted one pixel is still a
-cat.
+Picture one filter as a stencil you drag across the image. At
+every position you take the patch under the stencil, multiply
+elementwise with the stencil weights, sum, add a bias — that
+scalar is one cell of one feature map. A second filter is a
+second stencil with its own weights; it produces a second map.
+Because the same stencil is reused everywhere, a cat shifted one
+pixel still hits the same weights. A Dense layer on `H*W*C`
+inputs would need a separate weight for every pixel location, so
+a one-pixel shift looks like an entirely new pattern.
 
-**Solution** — Share the filter. Parameter count is
-`k*k*C_in*C_out`, independent of `H` and `W` (until you
-flatten).
-
-**Memory.** Weights can be small. Activations are not:
+Parameter count is `k*k*C_in*C_out`, independent of `H` and `W`
+(until you flatten). Weights can be small. Activations are not:
 
 ```
   maps ≈ batch * H * W * K * bytes_per_act
@@ -103,9 +102,9 @@ High-res inputs, large `K`, and naive "same" padding at stride
 1 are how a "tiny 3×3 net" fills the GPU. Downsample on
 purpose (stride, pooling) when the task allows.
 
-**Failure mode** — Stride and padding you never computed, so a
-skip connection in a ResNet-shaped block is 17×17 vs 16×16 and
-the add fails. Draw the spatial shape after every layer once.
+Stride and padding you never computed leave a skip connection
+in a ResNet-shaped block at 17×17 vs 16×16 and the add fails.
+Draw the spatial shape after every layer once.
 
 Channels-last (`NHWC`) vs channels-first (`NCHW`) is a device
 convention. Keras hides it until an op or a pretrained weight
@@ -114,21 +113,18 @@ file does not.
 ## Pooling
 
 Pooling downsamples a local window (max or mean), usually
-2×2 stride 2.
+2×2 stride 2. The grid is still huge after early convs; you
+also want some invariance to a one-pixel shift. Max-pool is
+the 2010s default: cheap, keeps the strongest response.
+Average-pool (and **global** average pool before a head)
+showed up as a way to kill giant Dense layers on flattened
+maps.
 
-**Problem** — The grid is still huge; you want some invariance
-to a one-pixel shift.
-
-**Solution** — Max-pool is the 2010s default: cheap, keeps the
-strongest response. Average-pool (and **global** average pool
-before a head) showed up as a way to kill giant Dense layers
-on flattened maps.
-
-**Failure mode** — Pooling away the spatial grid and then
-trying to localize. Detection and segmentation *need* layout.
-Classification can afford to throw it away at the end. Also:
-overlapping pool with weird strides as a cargo-cult copy from
-AlexNet when your map is already tiny.
+Pooling away the spatial grid and then trying to localize is
+a contradiction. Detection and segmentation *need* layout.
+Classification can afford to throw it away at the end.
+Overlapping pool with weird strides as a cargo-cult copy from
+AlexNet, when your map is already tiny, wastes resolution.
 
 Modern stacks often **stride in the conv** instead of a
 separate pool. Same job: shrink `H, W`, grow `K`.
@@ -148,19 +144,15 @@ added to the toolkit. You will mix them.
 | **Xception** | Inception idea pushed to **depthwise separable** convs (spatial then pointwise). Extreme channel/space split; fewer params per effective depth. |
 | **SENet** | **Squeeze-excitation**: a tiny MLP on pooled channels that rescales feature maps. Channel-wise attention, not a Transformer. |
 
-**Problem** — A blog says "we used ResNet" and you cannot tell
-whether they meant skips, ImageNet weights, or just a 50 in
-the filename.
+A blog that says "we used ResNet" without naming the move leaves
+you guessing whether they meant skips, ImageNet weights, or just
+a 50 in the filename. If you did not use residual adds, you used
+a deep conv stack. Stacking every move at once (SE + separable +
+1×1 + skips) without a reason, then declaring "architecture
+search," is noise. Ablate from a known backbone.
 
-**Solution** — Name the move. If you did not use residual
-adds, you did not use ResNet; you used a deep conv stack.
-
-**Failure mode** — Stacking every move at once (SE +
-separable + 1×1 + skips) without a reason, then declaring
-"architecture search." Ablate from a known backbone.
-
-Inception's 1×1 is not "a useless conv." It is a learned
-channel mixer / dimensionality reducer so the 3×3 is affordable.
+Inception's 1×1 is not a useless conv. It is a learned channel
+mixer / dimensionality reducer so the 3×3 is affordable.
 Depthwise separable is that split taken literally.
 
 ## A ResNet-34-shaped idea
@@ -179,16 +171,12 @@ When stride or channel count changes, the skip **projects**
 groups of blocks that keep spatial size, then a stride-2
 transition, repeat, then global pool and a Dense head.
 
-**Problem** — A 34-layer VGG-shaped stack without skips
-trains poorly (ch. 11 vanishing story, plus degradation).
-
-**Solution** — Identity skips. The optimizer can choose "do
-nothing" per block.
-
-**Failure mode** — A skip that bypasses BN/ReLU in a way you
-did not intend, or a projection skip that is accidentally
-the *main* path (huge 1×1) so you no longer have a residual
-learning problem.
+A 34-layer VGG-shaped stack without skips trains poorly —
+vanishing gradients and degradation. Identity skips let the
+optimizer choose "do nothing" per block. A skip that bypasses
+BN/ReLU in a way you did not intend, or a projection skip that
+is accidentally the *main* path (huge 1×1), stops being a
+residual learning problem.
 
 Once the block is boring, Keras applications (or today's
 `timm` / `torchvision` equivalents) are how you get a
@@ -199,24 +187,24 @@ ResNet-50 you did not mis-type.
 `keras.applications` (2019-shaped) ships ImageNet classifiers
 with weights: ResNet, Xception, VGG, Inception, … You strip
 the head, optionally freeze, attach a new classifier, and
-follow the freeze-then-unfreeze recipe from
-[ch. 11](../11-training-dnns/).
+follow freeze-then-unfreeze: train the head, then gently
+unfreeze upper layers at a much smaller learning rate.
 
-**Problem** — Your labeled set is 2,000 medical images.
+Your labeled set is often 2,000 medical images. Start from a
+backbone that already knows generic visual statistics. Replace
+the 1000-way head. Use the preprocessing the backbone was
+trained with (mean, scale, RGB order). That preprocessing is
+part of the weight file.
 
-**Solution** — Start from a backbone that already knows
-generic visual statistics. Replace the 1000-way head. Use
-the preprocessing the backbone was trained with (mean, scale,
-RGB order). That preprocessing is part of the weight file.
+ImageNet preprocess skipped means a "pretrained" net sees
+pixels in the wrong numeric range. Unfreezing the whole
+backbone at Adam 1e-3 on a tiny set erases the prior in an
+epoch.
 
-**Failure mode** — ImageNet preprocess skipped, so a
-"pretrained" net sees pixels in the wrong numeric range.
-Or unfreezing the whole backbone at Adam 1e-3 on a tiny set
-and erasing the prior in an epoch.
-
-Transfer here is **your labels, your head, their trunk**.
-It is not CLIP-as-a-service unless you are explicitly using
-that model as a backbone you still train or probe.
+Transfer here is **your labels, your head, their trunk**. A
+foundation vision model you fine-tune or probe as a backbone
+fits the same recipe. A model you only call as a closed API
+does not.
 
 ## Classification vs localization vs detection vs segmentation
 
@@ -234,16 +222,12 @@ Same backbone, different outputs.
   is the output. Instance segmentation (this edition only
   brushes) also wants *which* object.
 
-**Problem** — Product language says "detect" for a single
-centered object.
-
-**Solution** — If the count is always one and the crop is
-honest, it is localization. If the scene is cluttered, it
-is detection. If you need the silhouette, it is
-segmentation.
-
-**Failure mode** — A classifier with a sliding window called
-"YOLO" because it is fast in a slide deck.
+Product language often says "detect" for a single centered
+object. If the count is always one and the crop is honest, it
+is localization. If the scene is cluttered, it is detection.
+If you need the silhouette, it is segmentation. A classifier
+with a sliding window called "YOLO" because it is fast in a
+slide deck is marketing.
 
 ### Detection intuition: FCN and YOLO
 
@@ -262,12 +246,10 @@ objects in the early versions.
 
 You do not need to implement YOLO from scratch in a
 workshop. You need to know why detection is **assignment +
-box + class + maybe objectness**, not `Dense(4)`.
-
-**Failure mode** — Training detection with classification
-cross-entropy only, no box loss, no empty-cell handling.
-The net will happily shout the majority class in every
-cell.
+box + class + maybe objectness**, not `Dense(4)`. Training
+detection with classification cross-entropy only, no box
+loss, no empty-cell handling, lets the net shout the
+majority class in every cell.
 
 ### Semantic segmentation
 
@@ -276,8 +258,8 @@ decoder (upsample, skip from encoder so edges come back).
 Loss is usually per-pixel cross-entropy (class imbalance
 will haunt you: the sky has more pixels than the bicycle).
 
-**Failure mode** — Accuracy as the metric on a 5% foreground
-task. Use IoU / Dice-shaped scores. Resize labels with
+Accuracy as the metric on a 5% foreground task lies. Use
+IoU / Dice-shaped scores. Resize labels with
 nearest-neighbor, not bilinear, or class ids become 1.4.
 
 ## What aged since 2019
@@ -286,8 +268,7 @@ nearest-neighbor, not bilinear, or class ids become 1.4.
   "conv vs attention" argument. ConvNets did not die;
   ConvNeXt is a conv net that stole transformer training
   recipes. This chapter's hierarchy-of-maps still describes
-  a ResNet; a ViT is a different inductive bias
-  ([ch. 16](../16-nlp-attention/) for attention as a *layer*).
+  a ResNet; a ViT is a different inductive bias.
 - **The YOLO family moved a lot** (v3 → … → whatever number
   is fashionable). One-shot grid detection is still the
   intuition; the matching losses, necks, and backbones are
@@ -299,8 +280,8 @@ nearest-neighbor, not bilinear, or class ids become 1.4.
   preprocess that matches the weights.
 - **Foundation vision models** (CLIP, SAM, SigLIP) changed
   what you fine-tune *for*. They are still pretrained
-  backbones plus a head if you train them; they are Agents-
-  track APIs if you only call them.
+  backbones plus a head if you train them; they are closed
+  APIs if you only call them.
 - Depthwise separable convs and residual blocks are still
   how you read a mobile backbone. SE-style channel gates
   evolved into various attention blocks; the original move
@@ -337,5 +318,3 @@ nearest-neighbor, not bilinear, or class ids become 1.4.
     is 95%. What did the majority class do, and which
     label-resize interpolation would silently corrupt
     the masks?
-
-Continue to [Processing sequences using RNNs and CNNs](../15-sequences-rnns/).

@@ -5,17 +5,16 @@ Suresha and Dewang Sultania; Manning). This MEAP's printed contents page is
 **single-level** (nine chapter titles). The headings below follow the
 chapter's actual topics.
 
-This chapter is the **assembly**. Chapters 2–8 were services. Here
-they become one assistant — **Claw** in the book — grown one
-capability at a time so you can see which service earns which
-behavior. Skip it and you will "know the platform" as a slide and
-still paste `openai.chat` into a script when a deadline appears.
+This chapter is the **assembly**. Earlier platform chapters were
+services. Here they become one assistant — **Claw** in the book —
+grown one capability at a time so you can see which service earns
+which behavior. Skip it and you will "know the platform" as a slide
+and still paste `openai.chat` into a script when a deadline appears.
 
-The Agents track is a different book. Field patterns for support,
-RAG, and research live in
-[agents ch. 11](../../agents/11-field-tips/). Mention that folder.
-Do not copy its five-layer tips into this file. This folder stays
-on **how the DAS platform composes** into a deployed assistant.
+The folder stays on **how the platform composes** into a deployed
+assistant. Field patterns for support, RAG, and research agents are
+a different concern; here context is **assembly from platform
+sources**, and Claw is the existence proof.
 
 ## The mental model
 
@@ -46,14 +45,8 @@ on **how the DAS platform composes** into a deployed assistant.
 
 The one sentence to remember: **Sarah's code is an orchestrator;
 the platform is the product.** If the workflow file is 2,000 lines
-of HTTP and prompt glue, you did not use chapters 2–8. You
-reimplemented them.
-
-Chapter 1 traced Maria's return-policy question through boxes.
-This chapter *is* that trace, with a name and a deploy command.
-Persona and context-engineering rows in
-[`TRADEOFFS.md`](../../TRADEOFFS.md) are the agent-side cousin;
-here context is **assembly from platform sources**.
+of HTTP and prompt glue, you did not use the platform. You
+reimplemented it.
 
 ## The blueprint
 
@@ -86,14 +79,13 @@ No tools.
 
 That is not a toy because the SDK is thin. It is a toy because
 **the product is a toy**. It is already a *platform* citizen:
-retries, routing, cache, and provider fallback from
-[chapter 3](../3-model-service/) apply. You did not write them.
-The architecture diagram is one box under the function, and that
-is honest.
+retries, routing, cache, and provider fallback apply. You did not
+write them. The architecture diagram is one box under the
+function, and that is honest.
 
-Failure mode you want to feel: the user says "as I said," and
-Claw does not know. Do not "fix" that with a bigger prompt. The
-next section exists.
+Feel this gap early: the user says "as I said," and Claw does not
+know. Do not "fix" that with a bigger prompt. The next section
+exists.
 
 Register the prompt **by name** (`claw-assistant`), not as a
 string literal only in the handler. Versioning and A/B later
@@ -102,12 +94,11 @@ how experiments become git diffs.
 
 ## Remember conversations (session)
 
-[Chapter 4](../4-session-service/) is the fix. Load or create a
-session, pass history into the model call, append the exchange
-afterward. Postgres (or whatever backend you chose) outlives the
-pod. Conversations survive deploys and replica hops.
+Load or create a session, pass history into the model call, append
+the exchange afterward. Postgres (or whatever backend you chose)
+outlives the pod. Conversations survive deploys and replica hops.
 
-Handler changes are small on purpose: `session_id` in, 
+Handler changes are small on purpose: `session_id` in,
 `get_or_create`, `history` into `chat`, `append` user + assistant.
 The client must **send the id back** (cookie, Slack thread map,
 JSON field). If you key only on `user_id` and cram all history
@@ -115,10 +106,10 @@ into one session, you get one infinite transcript and a token
 blowup. If you mint a new session every message, you get version
 1 again.
 
-Truncation / summary / hierarchical memory from chapter 4 start
-to matter as soon as the chat is longer than a demo. Version 2
-can still be "send recent turns." Version 2 **must not** be
-"stuff until the API errors."
+Truncation, summary, and hierarchical memory start to matter as
+soon as the chat is longer than a demo. Version 2 can still be
+"send recent turns." Version 2 **must not** be "stuff until the
+API errors."
 
 ```
   v1:  message --> Model --> text
@@ -132,10 +123,9 @@ that fails, stop adding RAG. You do not have a conversation.
 
 A sliding window is this sitting. Tomorrow's session starts
 empty unless you store **facts that outlive the transcript**.
-Chapter 4's model-managed memories: the model (or a dedicated
-pass) proposes what to keep — "prefers window seats", "on-call
-for payments this week" — and the Session Service stores them
-per user.
+Model-managed memories: the model (or a dedicated pass) proposes
+what to keep — "prefers window seats", "on-call for payments this
+week" — and the Session Service stores them per user.
 
 Architecture change: the function now receives **two** bundles
 from Session: recent messages, and a compact memory list. Both
@@ -158,9 +148,8 @@ like?" If it fails, you built a chatbot, not an assistant.
 ## Grounding: knowledge retrieval and agentic RAG
 
 Memories are about the user. **Documents** are about the org.
-Without [chapter 5](../5-data-service/), Claw answers HR
-questions from pretraining and confidence. That is the dangerous
-kind of fluency.
+Without retrieval, Claw answers HR questions from pretraining and
+confidence. That is the dangerous kind of fluency.
 
 **Naive RAG (always retrieve):** `data.search` / `hybrid_search`
 on every turn, stuff top chunks, generate. Good for "what is
@@ -171,9 +160,8 @@ string is a bad search.
 **Agentic RAG:** retrieval is a **tool** (or an explicit step
 the model can request). The model may reformulate, search
 again, or skip. Latency and loop risk go up; relevance on messy
-questions goes up. TRADEOFFS has this row. Agents chapter 6
-teaches the agent-shaped version; here you **call Data**, maybe
-more than once, from the loop in later sections.
+questions goes up. Here you **call Data**, maybe more than once,
+from the loop in later sections.
 
 ```
   always-on RAG                agentic RAG
@@ -184,21 +172,20 @@ more than once, from the loop in later sections.
 ```
 
 Index choice is a product decision: `hr.policies` is not
-`eng.runbooks`. Isolation from chapter 5 is how Claw does not
-"helpfully" cite a sealed memo. Filters (`audience=employee`)
-belong in the search call, not in a prompt that says "please
-only use public docs."
+`eng.runbooks`. Isolation is how Claw does not "helpfully" cite
+a sealed memo. Filters (`audience=employee`) belong in the search
+call, not in a prompt that says "please only use public docs."
 
 Grounding is not a citation aesthetic. If the chunks do not
-support the claim, you need a **score** (chapter 7) and maybe a
-critic (Agents ch. 7). This chapter's job is to **put the
-chunks in the window** and to let the loop retrieve again.
+support the claim, you need a **score** and maybe a critic. This
+chapter's job is to **put the chunks in the window** and to let
+the loop retrieve again.
 
 ## Tools and the agent loop
 
 Text that is wrong is embarrassing. A calendar invite to 500
-people is an incident. [Chapter 6](../6-tools-and-guardrails/)
-is how Claw **acts** without holding vendor keys.
+people is an incident. Tools are how Claw **acts** without
+holding vendor keys.
 
 Register tools on the platform (`claw.calendar.list`,
 `claw.tickets.create`, `claw.web.search`, maybe
@@ -221,18 +208,17 @@ with a token from env.
 
 Caps: max iterations, max tools per turn, timeout. Uncapped
 loops are how a weekend research job becomes a Monday invoice.
-Chapter 8's workflow timeout is the outer envelope; the loop
-needs an inner counter too.
+The workflow timeout is the outer envelope; the loop needs an
+inner counter too.
 
 Side effects: prefer read tools before write tools in the kit
 you expose to a general assistant. Confirmation policies (next
 section) for anything that emails, spends, or invites.
 
-Agents chapters 4 and 9 go deeper on handoffs and layered
-loops. Claw can stay **one** agent with tools. If you split
-into a hub of specialists, that is a composition of workflows
-or an in-process graph — do not confuse those with extra
-platform services.
+Claw can stay **one** agent with tools. If you split into a hub
+of specialists, that is a composition of workflows or an
+in-process graph — do not confuse those with extra platform
+services.
 
 ## Safety: guardrails at every step
 
@@ -241,8 +227,7 @@ Joking "invite the whole company," medical advice, a
 performance complaint pasted into a public ticket: predictable,
 not hypothetical.
 
-Chapter 6's defense in depth maps onto Claw as **inspection
-points**:
+Defense in depth maps onto Claw as **inspection points**:
 
 1. **Input** — jailbreak, PII, disallowed topics, before you
    spend retrieval and model tokens.
@@ -259,10 +244,9 @@ Prompt-only "you must not…" is still in the system prompt as
 instruction, not as enforcement. Enforcement is the Guardrails
 Service and Tool Service policy.
 
-False positives block real work; measure them (chapter 7). A
-silent drop is indistinguishable from a hang. Return a clear
-refusal **from the policy**, not a model improvisation that
-apologizes incorrectly.
+False positives block real work; measure them. A silent drop is
+indistinguishable from a hang. Return a clear refusal **from the
+policy**, not a model improvisation that apologizes incorrectly.
 
 If Claw is healthcare-adjacent, input policy is not optional
 color. If Claw is "internal only," you still need behavioral
@@ -304,17 +288,16 @@ A practical assembly order (teaching, not dogma):
    chunk the *user*, do not silently clip a legal question).
 4. Tool schemas for the **kit**, not the planet.
 5. Retrieved chunks with a token cap and citations.
-6. History into the **remaining** budget (chapter 4
-   algorithms).
+6. History into the **remaining** budget.
 
 The system prompt in the book grows by version as capabilities
 appear. That is correct: v1 cannot mention tools you have not
 wired. Keep capabilities honest. "You can refund" with no
 refund tool is how you get hallucinated refunds.
 
-Token accounting should be visible on the trace (chapter 7).
-If you cannot say how many tokens were prompt vs tools vs
-docs vs history, you cannot tune this.
+Token accounting should be visible on the trace. If you cannot
+say how many tokens were prompt vs tools vs docs vs history, you
+cannot tune this.
 
 ## The complete agent loop
 
@@ -362,14 +345,13 @@ turn needs them; they are history. Store **memories** only
 through the memory path, not by hoping the transcript lasted.
 
 This loop can stay in one workflow function. It can also call
-child workflows (chapter 8) for heavy research. Start in one
-function until a stage has different scale or GPU needs.
+child workflows for heavy research. Start in one function until
+a stage has different scale or GPU needs.
 
 ### Streaming
 
 A single JSON at the end is easy to compose and slow to feel.
-Layer [chapter 3](../3-model-service/) `chat_stream` with
-[chapter 8](../8-workflow-service/) `response_mode="stream"`.
+Layer `chat_stream` with `response_mode="stream"`.
 
 Each loop iteration streams. **Content tokens** yield to the
 client immediately. **Tool-call deltas** buffer silently; the
@@ -400,11 +382,11 @@ Once Claw is in production, Sarah's questions are operational:
 - Is quality rising or are people just tired of filing bugs?
 
 She should **not** add spans by hand around every
-`platform.*` call. Chapter 7's default instrumentation already
-wraps service boundaries: Model records tokens, cost, TTFT,
-model id; Data records query and hit counts; Tools record
-duration and status; Guardrails record policy and action.
-The waterfall **is** the architecture diagram with timings.
+`platform.*` call. Default instrumentation already wraps service
+boundaries: Model records tokens, cost, TTFT, model id; Data
+records query and hit counts; Tools record duration and status;
+Guardrails record policy and action. The waterfall **is** the
+architecture diagram with timings.
 
 Actionable numbers: a 5s Data span with 0 hits is a grounding
 bug, not a "slow LLM." A cheap model with a terrible
@@ -446,11 +428,10 @@ registry does not become a museum.
 
 ## Deploying
 
-The `@workflow` decorator on Claw **is** the deploy contract
-from chapter 8: name, `api_path` (`/claw/chat`), mode
-(`stream` for the product you actually want), replicas,
-CPU/memory, timeout large enough for a few tool hops but not
-for infinite research.
+The `@workflow` decorator on Claw **is** the deploy contract:
+name, `api_path` (`/claw/chat`), mode (`stream` for the product
+you actually want), replicas, CPU/memory, timeout large enough
+for a few tool hops but not for infinite research.
 
 `genai-platform deploy claw.py` (or your module) builds the
 image, registers, deploys, waits for ready, **registers the
@@ -460,7 +441,7 @@ They do not SSH to pods.
 Secrets: still credential refs on tools, not env in the
 workflow image. Model provider keys live in the Model
 Service. If Claw's Dockerfile contains `OPENAI_API_KEY`,
-Sarah skipped chapter 3.
+Sarah skipped the Model Service design.
 
 Rollbacks: previous workflow version, not "un-edit the
 prompt in prod by hand." Prompt-only changes can also be
@@ -494,25 +475,22 @@ repo. It is:
 
 A script can fake any one of these for a demo. It cannot
 give the fifth team the same path without copying Redis
-glue. That was chapter 1. Claw is the existence proof.
+glue. Claw is the existence proof.
 
 You can still buy a vendor suite that implements these
 boxes. You cannot skip **naming** them. If you cannot point
 to where sticky A/B assignment lives, you do not have
 experiments. You have a flag.
 
-Compare Agents ch. 11: those notes teach you how a support
-or RAG *agent* should think (layers, field tips). These
-notes teach you where that agent **runs** so the next
-assistant is not a second snowflake.
-
 ### What this chapter is not
 
 It is not a new service. If you invented a ninth platform
-daemon to "run Claw," reread chapter 8.
+daemon to "run Claw," the Workflow Service already is that
+runtime.
 
 It is not a full multi-agent org chart. Hub-and-spoke and
-teams remain Agents. Claw may *call* other workflows.
+teams remain agent-design work. Claw may *call* other
+workflows.
 
 It is not a promise that assembly order in the context
 section is the only correct one. It is a promise that
@@ -545,7 +523,7 @@ section is the only correct one. It is a promise that
    yield raw tokens then filter at the end?
 7. An 8s Claw turn: waterfall shows Data 6.5s, Model 0.4s,
    tools 0. You have no custom spans. What do you *not*
-   need to add to the workflow, and what Dataset case
+   need to add to the workflow, and what dataset case
    might you harvest?
 8. You reorder the prompt to fix tool choice. Why is
    shipping that in the same deploy as a new model and a
@@ -555,8 +533,5 @@ section is the only correct one. It is a promise that
    *not* be in Claw's image (a provider key, a second
    team's search implementation) and where each actually
    lives.
-10. After this folder, what do you still take from
-    [agents ch. 11](../../agents/11-field-tips/) — in one
-    sentence — that the platform will not invent for you?
-
-Continue to the [topic index](../../INDEX.md).
+10. In one sentence: what does Claw prove about the
+    platform that a slide deck of service boxes cannot?

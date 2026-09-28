@@ -4,34 +4,20 @@ Companion notes for **Chapter 13** of *Hands-On Machine Learning with
 Scikit-Learn, Keras, and TensorFlow* (2nd edition, Aurélien Géron;
 O'Reilly, 2019).
 
-[Chapter 12](../12-custom-tf/) made the training step fast and
-honest. This chapter is how examples *get to* that step without
-turning the GPU into a client of a sleepy Python `for` loop. Skip
-it and you will `np.load` the whole dataset, wonder why RAM dies
-at 10 GB, and then "fix" features by pasting a sentence-transformer
-into a column named `embedding`.
+A fast training step is worthless if examples arrive through a sleepy
+Python `for` loop. This chapter is how data *gets to* that step:
+`tf.data` pipelines, TFRecord, categorical encodings, and
+preprocessing that travels with the model. Skip it and you will
+`np.load` the whole dataset, wonder why RAM dies at 10 GB, and then
+"fix" features by pasting a frozen sentence-transformer into a
+column named `embedding`.
 
-## See also (do not merge)
-
-**Embeddings in this chapter are lookup tables trained with the
-task loss.** An integer category id becomes a small dense vector
-inside *this* network. The vector moves when your classifier or
-regressor moves.
-
-That is not RAG. Retrieval vectors in an agent or a Data Service
-are usually a *frozen* encoder (often a sentence-transformer)
-plus an index plus a query-time search.
-
-- How an *agent* retrieves: [agents ch. 6](../../agents/6-memory-and-rag/).
-- How a *platform* serves indexes: [platform ch. 5](../../platform/5-data-service/).
-- Word embeddings as language-model features show up again in
-  [ch. 16](../16-nlp-attention/) — still tables inside a net, still
-  not a vector database.
-
-Do not merge those folders into this one. If your sentence is
-"store embeddings in Chroma / pgvector," you are not in Géron 13.
-The cheat-sheet row: [`TRADEOFFS.md`](../../TRADEOFFS.md)
-("Embeddings as features vs embeddings as retrieval").
+Embeddings in this chapter are lookup tables trained with the task
+loss. An integer category id becomes a small dense vector inside
+*this* network. The vector moves when your classifier or regressor
+moves. That is a capacity and generalization choice for this net.
+It is a different job from retrieval vectors sitting in an index
+for query-time search.
 
 ## The mental model
 
@@ -59,10 +45,10 @@ are part of the model** — shuffle, batch, parse, and categorical
 encoding change both throughput and what the optimizer sees.
 
 Two consequences fall out of that diagram. First, `model.fit(x,
-y)` with giant NumPy arrays is a demo API, not an architecture;
-the real unit is a `tf.data.Dataset` that yields batches. Second,
-choosing one-hot versus an embedding table is a *capacity and
-generalization* choice for this net, not a retrieval architecture.
+y)` with giant NumPy arrays is a demo API; the real unit is a
+`tf.data.Dataset` that yields batches. Second, choosing one-hot
+versus an embedding table is a capacity and generalization choice
+for this net.
 
 ## `tf.data`
 
@@ -92,18 +78,17 @@ Typical chain for training:
        --map(parse, parallel)--> --batch--> --prefetch-->
 ```
 
-**Problem** — The step time is 90% `GetNext` and 10% matmul.
+When step time is 90% `GetNext` and 10% matmul, the GPU is
+starving. Profile one epoch. Then enlarge the shuffle buffer,
+parallelize map, cache after expensive decode if RAM allows, and
+prefetch at the end. Keras `fit` consumes `tf.data` directly; you
+do not wrap it in a Python generator unless you like the GIL.
 
-**Solution** — Profile one epoch. Then shuffle buffer, parallel
-map, cache after expensive decode if RAM allows, prefetch at the
-end. Keras `fit` consumes `tf.data` directly; you do not wrap it
-in a Python generator unless you like the GIL.
-
-**Failure mode** — `map` that uses a Python function with NumPy
-inside a `tf.function` training step, or shuffle *after* batch
-(you are permuting batches, not examples). Another: `cache()` of
-an augmented dataset so every epoch sees the same "random"
-flips.
+A `map` that uses a Python function with NumPy inside a
+`tf.function` training step, or shuffle *after* batch (you are
+permuting batches, not examples), wrecks the pipeline. Another
+trap: `cache()` of an augmented dataset so every epoch sees the
+same "random" flips.
 
 Validation data usually **does not shuffle** (or shuffles once
 for sanity) and often drops augmentation. Same parse, different
@@ -120,13 +105,11 @@ open/close. **TFRecord** is a sequence of length-delimited byte
 blobs, typically serialized protocol buffers, optionally
 GZIP/ZLIB compressed.
 
-**Problem** — A million JPEGs as individual files: the training
-cluster becomes a metadata server.
-
-**Solution** — Shard into a handful of TFRecord files, interleave
-the shards, parse in `map`. Compression trades CPU for disk and
-network. On a GPU box with weak CPUs, uncompressed can win;
-measure.
+A million JPEGs as individual files turns the training cluster
+into a metadata server. Shard into a handful of TFRecord files,
+interleave the shards, parse in `map`. Compression trades CPU for
+disk and network. On a GPU box with weak CPUs, uncompressed can
+win; measure.
 
 ### Example and SequenceExample
 
@@ -136,19 +119,18 @@ feature name → bytes / float list / int64 list. That is a
 
 `tf.train.SequenceExample` adds a *context* (per-example) plus
 *feature lists* (per-timestep). That is a sequence: a sentence,
-a user session, a time series of events
-([ch. 15](../15-sequences-rnns/)).
+a user session, a time series of events.
 
 You parse with `tf.io.parse_single_example` (or the sequence
 variant) and a feature description dict. Wrong type in the
 description is a runtime error at parse, which is preferable to
 silent misaligned columns.
 
-**Failure mode** — One giant TFRecord (cannot shard, cannot
-parallel-read) or a new schema dumped into old files without a
-version field. Treat the protobuf schema as an API. Also:
-compressing already-compressed JPEGs inside GZIP TFRecords for
-no reason.
+One giant TFRecord cannot shard and cannot parallel-read. A new
+schema dumped into old files without a version field is an API
+break dressed as a data dump. Treat the protobuf schema as an
+API. Compressing already-compressed JPEGs inside GZIP TFRecords
+for no reason wastes CPU twice.
 
 You do not need to love protobuf to use this chapter. You need
 to know **Example = one row**, **SequenceExample = one row plus
@@ -176,28 +158,25 @@ trained by the **same task loss** as the rest of the net
                     |  dL/dE  from the task
 ```
 
-**Problem** — `vocab` is 50,000. One-hot will not fit, and it
-does not share statistical strength across ids.
+When `vocab` is 50,000, one-hot will not fit, and it does not
+share statistical strength across ids. An embedding layer
+(`keras.layers.Embedding` or a gather on a Variable) is the
+usual answer. `dim` is a hyperparameter: too small and the table
+cannot separate ids; too large and you overfit rare ids.
 
-**Solution** — An embedding layer (`keras.layers.Embedding` or
-a gather on a Variable). `dim` is a hyperparameter: too small
-and the table cannot separate ids; too large and you overfit
-rare ids.
-
-**Failure mode** — Calling the table "the embeddings" and then
-nearest-neighbor searching it as if it were a retrieval index
-from [agents ch. 6](../../agents/6-memory-and-rag/). Rows are
-optimized for *this head*, not for semantic search across
-documents. A second failure: one-hot of a huge vocab "for
-interpretability," then OOM.
+Calling the table "the embeddings" and then nearest-neighbor
+searching it as if it were a retrieval index confuses two jobs.
+Rows are optimized for *this head*, for *this* loss. A second
+trap: one-hot of a huge vocab "for interpretability," then OOM.
 
 Out-of-vocabulary ids need a slot (hashing trick, UNK token, or
 a dedicated row). Hash collisions are a bias; UNK is a sink.
 Pick one and log how often it fires.
 
-This chapter's embeddings are **features**. [Chapter 16](../16-nlp-attention/)
-learns word tables for language tasks. Still features. Still
-not RAG.
+This chapter's embeddings are **features inside the network** —
+lookup tables whose rows move with the task. Word tables for
+language tasks are the same idea: still features, still trained
+with a loss on labels.
 
 ## Keras preprocessing layers
 
@@ -213,16 +192,15 @@ jobs did not):
 - Text vectorization (split, n-grams, output integers for an
   embedding).
 
-**Problem** — Train Python did `X / 255`; the SavedModel did
-not.
+Train Python did `X / 255`; the SavedModel did not — that is
+the classic train/serve skew. A preprocessing layer as the first
+layer(s), adapted on training data (`layer.adapt(dataset)`),
+exported with the model, closes the gap. TF Transform (below) is
+the production-scale version of the same idea: apply once,
+consistently.
 
-**Solution** — A preprocessing layer as the first layer(s),
-adapted on training data (`layer.adapt(dataset)`), exported
-with the model. TF Transform (below) is the production-scale
-version of the same idea: apply once, consistently.
-
-**Failure mode** — `adapt` on train+test, or augmentation
-layers left active at serve so a mobile crop is random. Augment
+`adapt` on train+test, or augmentation layers left active at
+serve so a mobile crop is random, reintroduces the skew. Augment
 on the train dataset or behind a `training` flag you actually
 pass.
 
@@ -243,16 +221,14 @@ corpus (min, max, vocab, mean) and emits a **transform graph**
 that train and serve both run. That is how you avoid "we
 recomputed the mean in Flask."
 
-**Problem** — Vocabularies and scaling constants drift between
-the training job and the model server.
+Vocabularies and scaling constants that drift between the
+training job and the model server are a silent accuracy killer.
+One analysis pass, one exported transform, two consumers
+(trainer and server): that is the TFX-shaped answer.
 
-**Solution** — One analysis pass, one exported transform, two
-consumers (trainer and server). This is the TFX-shaped answer.
-
-**Failure mode** — Analyzing on a convenience sample that
-misses rare tokens, then serving a flood of UNKs. The transform
-is only as good as the data it saw — same lesson as
-[ch. 2](../2-end-to-end-project/).
+Analyzing on a convenience sample that misses rare tokens, then
+serving a flood of UNKs, looks like a serve bug. It is a vocab
+computed on the wrong slice of data.
 
 You can skip TF Transform in a workshop notebook. You cannot
 skip the *idea* if you will ship.
@@ -263,18 +239,16 @@ TFDS is a catalog of ready `tf.data` pipelines (MNIST, ImageNet
 downsamples, Wikipedia dumps, …) with splits, versioning, and
 a builder API for your own sets.
 
-**Problem** — Every tutorial redownloads MNIST into a different
-folder with a different preprocess.
+Every tutorial redownloads MNIST into a different folder with a
+different preprocess. `tfds.load(..., as_supervised=True)` and
+then *your* `map`/`batch`/`prefetch` keeps the baseline honest.
+Splits (`train`, `test`, `validation`) are part of the dataset
+version; do not reshuffle a canned test split into train because
+the val curve looked sad.
 
-**Solution** — `tfds.load(..., as_supervised=True)` and then
-*your* `map`/`batch`/`prefetch`. Splits (`train`, `test`,
-`validation`) are part of the dataset version; do not reshuffle
-a canned test split into train because the val curve looked
-sad.
-
-**Failure mode** — Treating TFDS as "the data team." Catalog
-sets are for learning and baselines. Production tabular dumps
-still need the Example/TFRecord path and a schema you own.
+Treating TFDS as "the data team" oversells it. Catalog sets are
+for learning and baselines. Production tabular dumps still need
+the Example/TFRecord path and a schema you own.
 
 ## Putting it next to Keras `fit`
 
@@ -285,35 +259,32 @@ still need the Example/TFRecord path and a schema you own.
   model.fit(train_ds, validation_data=val_ds, epochs=...)
 ```
 
-If you wrote a custom loop in [ch. 12](../12-custom-tf/), iterate
-the same datasets. Do not have two parse functions. The pipeline
-is a contract: batch structure, dtypes, padded shapes.
+If you wrote a custom loop, iterate the same datasets. Do not
+have two parse functions. The pipeline is a contract: batch
+structure, dtypes, padded shapes.
 
-**Failure mode** — Train pipeline with `drop_remainder=True` and
-a val pipeline that does not, then a model that was traced on
-static `[B, ...]`. Or prefetch missing on train only, so you
+Train pipeline with `drop_remainder=True` and a val pipeline
+that does not, then a model traced on static `[B, ...]`, is a
+shape landmine. Prefetch missing on train only means you
 benchmark the GPU on val and the CPU on train.
 
 ## What aged since 2019
 
-- **Keras preprocessing layers moved house** — `tf.keras.layers.
-  experimental.preprocessing` became stable `keras.layers`
-  (and, under Keras 3, backend-agnostic layers). Read your
-  installed docs for the import path. The jobs (lookup, rescale,
-  text vectorize) are the same.
+- **Keras preprocessing layers moved house** —
+  `tf.keras.layers.experimental.preprocessing` became stable
+  `keras.layers` (and, under Keras 3, backend-agnostic layers).
+  Read your installed docs for the import path. The jobs
+  (lookup, rescale, text vectorize) are the same.
 - **TFX still exists**; the product names around it have
   churned. The idea "analyze once, apply in train and serve"
   is what to keep. Some teams now do the same job in Spark,
-  Beam, or a feature store. Do not rewrite this chapter as a
-  feature-store tutorial.
+  Beam, or a feature store.
 - **`tf.data` service / snapshot / options** grew after 2.0.
   Prefetch, parallel map, shuffle buffer, cache are still the
   first four knobs.
-- **Sentence-transformers as a RAG default** belong in
-  [agents ch. 6](../../agents/6-memory-and-rag/) and
-  [platform ch. 5](../../platform/5-data-service/), not here.
-  Mention them only to refuse the merge: a frozen retrieval
-  encoder is not `layers.Embedding` trained on your labels.
+- A frozen retrieval encoder feeding an index is a different
+  architecture from `layers.Embedding` trained on your labels.
+  Keep that distinction when someone says "we added embeddings."
 - Mixed precision and large-batch input pipelines matter more
   on modern GPUs; they do not replace parse-and-prefetch.
 
@@ -325,18 +296,17 @@ benchmark the GPU on val and the CPU on train.
 2. Your GPU util is 20% and CPU is hot. Which two `tf.data`
    knobs do you reach for first, and how would you tell
    augmentation-in-map from a tiny shuffle buffer?
-3. When do you want TFRecord shards instead of `from_tensor_
-   slices`? What does a single uncompressed 200 GB TFRecord
-   still get wrong?
-4. `Example` vs `SequenceExample`: which one is a row, which
-   one has a time axis, and which chapter will you need when
-   the time axis is the whole point?
+3. When do you want TFRecord shards instead of
+   `from_tensor_slices`? What does a single uncompressed
+   200 GB TFRecord still get wrong?
+4. `Example` vs `SequenceExample`: which one is a row, and
+   which one has a time axis?
 5. One-hot vs an embedding table for 12 countries vs 120,000
    SKUs. What is trained in the embedding case, and what loss
    moves those rows?
-6. A PM says "we added embeddings" and points at a Chroma
-   index of PDF chunks. Which track is that, and what would
-   an embedding *in this chapter* look like instead?
+6. Someone says "we added embeddings" and points at an index
+   of PDF chunk vectors from a frozen encoder. What would an
+   embedding *in this chapter* look like instead?
 7. Why put rescaling in a Keras layer that ships with the
    SavedModel rather than only in `dataset.map`? When would
    you still decode JPEGs in `map`?
@@ -344,10 +314,8 @@ benchmark the GPU on val and the CPU on train.
    a laptop does not, and what failure mode looks like a
    "serve bug" but is a vocab computed on the wrong split?
 9. TFDS gives you a `test` split. What is the honest use of
-   that split, and which [ch. 2](../2-end-to-end-project/)
-   sin is "just this once, mix it into train"?
+   that split, and why is "just this once, mix it into train"
+   dishonest?
 10. Name one thing you would change in the train pipeline but
     not the val pipeline, and one thing that must stay
     identical or the val metric is a lie.
-
-Continue to [Deep computer vision using CNNs](../14-cnns/).

@@ -3,20 +3,13 @@
 Companion notes for **Chapter 10** of *AI Agents in Action* (2nd edition,
 Micheal Lanham; Manning, 2026).
 
-You already have reasoning primitives ([ch. 5](../5-reasoning-and-planning/)),
-a three-layer loop ([ch. 9](../9-agentic-loop/)), and memory
-([ch. 6](../6-memory-and-rag/)). Stacking those pieces does not produce a
-mind. It produces a toolbox with no one deciding *which* instrument, *when*
-to put it down, and *whether* the work is even going well. This chapter is
-that missing craftsman — **cognition and metacognition as code**. Skip it
-and you will ship an agent that looks smart in a demo and then answers from
-a table of contents, retries the same search until the budget dies, or
-invents a procedure because retrieval came back empty.
-
-The Platform track does not replace this chapter. If you need shared
-sessions, indexes, and judges as *services*, that is
-[platform ch. 1](../../platform/1-why-a-platform/) onward. This folder stays
-on **how one agent thinks about its own thinking**.
+You can stack reasoning primitives, a three-layer loop, and memory and
+still lack a craftsman: something that decides *which* instrument,
+*when* to put it down, and *whether* the work is even going well. This
+chapter is that missing piece — **cognition and metacognition as code**.
+Skip it and you will ship an agent that looks smart in a demo and then
+answers from a table of contents, retries the same search until the
+budget dies, or invents a procedure because retrieval came back empty.
 
 ## The mental model
 
@@ -44,20 +37,17 @@ internal model of the task; metacognition is the quality of the agent's
 model of that model.** Architecture owns both. A bigger prompt owns
 neither.
 
-Two consequences. First, CoT / ReAct / ToT / Reflexion remain useful — they
-are the **primitives** [ch. 5](../5-reasoning-and-planning/) taught. This
-chapter is the **dispatcher** that chooses among them. Second, the
-[ch. 9](../9-agentic-loop/) loops still run. Cognition sits *inside* an
-iteration: L2 still decides "keep going or stop"; attention decides "which
-module, right now."
+Two consequences. First, CoT, ReAct, ToT, and Reflexion remain useful —
+they are the **primitives**. This chapter is the **dispatcher** that
+chooses among them. Second, the outer task loops still run. Cognition
+sits *inside* an iteration: the task loop still decides "keep going or
+stop"; attention decides "which module, right now."
 
 ## Cognition and metacognition as engineering
 
-**Problem** — Teams treat "smarter" as "more patterns in the system
-prompt."
-
-**Solution** — Name a failure, map it to a missing *module*, then add that
-module. Do not add another paragraph of "think carefully."
+Teams often treat "smarter" as "more patterns in the system prompt."
+Name a failure, map it to a missing *module*, then add that module.
+Do not add another paragraph of "think carefully."
 
 We are not arguing about machine consciousness. We are defining
 **observable, measurable behaviors** you can log, gate, and regress-test.
@@ -87,7 +77,7 @@ relevance and refuses to treat metadata as content is the patch.
 **Groove lock (broken record).** The same query, the same tool, the same
 near-duplicate finding, until `max_iterations`. The deficit is progress
 sensing. Without a signal that "this step did not move the workspace,"
-the L2 loop is just a `while True` with extra tokens.
+the outer loop is just a `while True` with extra tokens.
 
 **Plan rigor mortis (rigid plan).** Perception classified the ticket as
 "timeouts"; planning committed to "raise timeouts"; new evidence says the
@@ -110,25 +100,24 @@ you are still debugging vibes.
 
 ### From reasoning primitives to cognitive architecture
 
-[Chapter 5](../5-reasoning-and-planning/) taught you when *you* pick CoT,
-ReAct, a tree, Reflexion, or a sequential-thinking MCP server. The
-developer still made that choice at design time. A factual lookup does not
-need a thought tree. An ambiguous, contradictory ticket should not be a
-single CoT pass. **None of those patterns know they are the wrong
-pattern.**
+At design time you pick CoT, ReAct, a tree, Reflexion, or a
+sequential-thinking MCP server and hope every query fits. A factual
+lookup does not need a thought tree. An ambiguous, contradictory ticket
+should not be a single CoT pass. **None of those patterns know they are
+the wrong pattern.**
 
 ```
-  design-time pick (ch. 5)          run-time dispatch (this chapter)
-  ------------------------          --------------------------------
+  design-time pick                  run-time dispatch (this chapter)
+  ----------------                  --------------------------------
   you choose ReAct in the           perception estimates complexity
   agent constructor and             and type; planning picks a
   hope every query fits             primitive; evaluation can veto
                                     and force a different primitive
 ```
 
-Think of ch. 5 as teaching the agent to swing a hammer, a driver, and a
-saw. This chapter teaches it to **read the drawing** and put the hammer
-down when the job is a cut.
+Think of the primitives chapter as teaching the agent to swing a hammer,
+a driver, and a saw. This chapter teaches it to **read the drawing** and
+put the hammer down when the job is a cut.
 
 The architectural move is small to say and large to implement: primitives
 stay. A **workspace** plus an **attention policy** decide which primitive
@@ -174,7 +163,7 @@ execution on.
 **Stagnation detection.** After two hops, are the findings near-duplicates?
 Has confidence flatlined? A non-metacognitive agent hits the iteration
 cap. A metacognitive one **raises a signal** and forces a strategy change
-*inside* the current L2 iteration.
+*inside* the current outer iteration.
 
 **Knowledge-boundary awareness.** Distinguish "we have coverage," "we are
 on the edge," and "we are outside." Outside is not a prompt to try harder
@@ -203,10 +192,9 @@ then implements each rule as a software component.
 
 **Society of specialists.** Intelligence as a **committee of narrow
 skills** that compete and cooperate, not as one prompt that does
-everything. You already met a cousin in
-[ch. 4](../4-multi-agent-systems/) (flow / hub / team). Here the
-"agents" are **cognitive faculties** sharing one workspace, not product
-personas arguing in Slack.
+everything. Multi-agent product shapes (flow, hub, team) are cousins.
+Here the "agents" are **cognitive faculties** sharing one workspace, not
+product personas arguing in Slack.
 
 **Shared workspace.** Only a few items are "on stage" at once. Modules do
 not whisper in private side channels that the others cannot see. If
@@ -237,7 +225,7 @@ memory as the long-lived graph those modules consult and update.
                                gather / escalate
 ```
 
-Around a **structured workspace** (not a transcript):
+Around a **structured workspace** (not a transcript), each slot has a job:
 
 | Slot | What it holds |
 |---|---|
@@ -254,19 +242,19 @@ writes findings. Evaluation writes confidence and signals. Attention
 graph that outlives the cycle.
 
 This is a **pipeline that can interrupt itself**, not "one agent with more
-tools." L2 from [ch. 9](../9-agentic-loop/) still owns iteration and exit;
-this architecture owns **quality of processing inside an iteration**.
+tools." The outer task loop still owns iteration and exit; this
+architecture owns **quality of processing inside an iteration**.
 
 ### The cognitive workspace
 
 The workspace is the beating shared object. Every module reads it. Every
 module writes a **typed slice**. It is not conversation history, not a
-scratchpad of leftover tokens, and not the `ResearchState` from ch. 9
-alone — though if you built that state, this will feel like a sibling that
-also tracks *how the reasoning is going*.
+scratchpad of leftover tokens, and not research findings alone — though
+if you already built accumulating state for a research loop, this will
+feel like a sibling that also tracks *how the reasoning is going*.
 
-Ch. 9's research state accumulated **findings**. The cognitive workspace
-also accumulates **self-assessment**: confidence, contradictions among
+Research state accumulated **findings**. The cognitive workspace also
+accumulates **self-assessment**: confidence, contradictions among
 findings, whether the current strategy is earning progress, which
 attention flag is live.
 
@@ -283,15 +271,10 @@ Typical typed pieces (names are yours; the *slots* are the point):
 - **History** — enough of the last N steps to detect overlap and
   "we already ruled this out."
 
-**Problem** — Hidden state in prompt prose ("remember we tried X").
-
-**Solution** — If a later module must act on it, it is a **field**. If it
-is only in the transcript, it will be dropped, drowned, or hallucinated
-back.
-
-Treat the workspace like SPAL in [ch. 1](../1-rise-of-ai-agents/): boring
-and printable. If you cannot explain the next route from a dump, the
-architecture is theater.
+Hidden state in prompt prose ("remember we tried X") will be dropped,
+drowned, or hallucinated back. If a later module must act on it, it is a
+**field**. Treat the workspace as boring and printable. If you cannot
+explain the next route from a dump, the architecture is theater.
 
 ### Perception
 
@@ -396,11 +379,10 @@ Typical structured output (again, names are local):
 - Recommendation: continue, replan, gather more, escalate / present with
   uncertainty
 
-This is cousin to [ch. 7](../7-evaluation-and-feedback/) judges and
-grounding — **in the loop**, on the workspace, every hop, not only a
-Phoenix score after the user already saw the answer. Use both. Ch. 7 is
-how you know the *system* is regressing. This module is how *this run*
-refuses to lie.
+This is cousin to offline judges and grounding scores — **in the loop**,
+on the workspace, every hop, not only a Phoenix score after the user
+already saw the answer. Use both. Offline eval is how you know the
+*system* is regressing. This module is how *this run* refuses to lie.
 
 ### Attention
 
@@ -427,8 +409,7 @@ Signals break that order.
 The fast path is the dual-process win: familiar, cheap tickets should not
 tour every module. In production that is latency and tokens. The failure
 mode is **mis-routing a contradictory ticket onto the fast path**. Log
-every fast-path decision. Sample them in
-[ch. 7](../7-evaluation-and-feedback/).
+every fast-path decision. Sample them in your eval set.
 
 When debugging "why did it do that?", do not start in the LLM. Start in
 this decision tree and the workspace flags. If the flags are wrong,
@@ -438,13 +419,11 @@ is wrong, attention is the bug.
 ### Memory module and the MCP memory server
 
 Memory is the seventh piece: **persistent long-term structure**, not the
-session transcript ([ch. 6](../6-memory-and-rag/) already separated those).
-The book wires this through the official MCP memory server
-(`@modelcontextprotocol/server-memory`): a **local knowledge graph**
+session transcript. The book wires this through the official MCP memory
+server (`@modelcontextprotocol/server-memory`): a **local knowledge graph**
 with entities, directed relations (active voice), and observations hanging
 off entities. No extra vector DB required for this pattern; it persists as
-local JSON. You met the server in the memory chapter; here it is the
-agent's **institutional scar tissue**.
+local JSON. Here it is the agent's **institutional scar tissue**.
 
 Map the graph onto how the architecture thinks:
 
@@ -464,12 +443,10 @@ is a **proactive cognitive layer** around those tools:
 3. **Broaden on knowledge-gap signals** before you declare outside
    coverage.
 
-Platform-shaped session stores and org indexes remain
-[platform ch. 4](../../platform/4-session-service/) and
-[platform ch. 5](../../platform/5-data-service/). Do not merge them into
-this graph. This graph is **the agent's learned problem-solving memory**.
-Those services are **how the organization keeps transcripts and documents
-alive**. Same word, different job.
+Org-wide session stores and document indexes are a different job. This
+graph is **the agent's learned problem-solving memory**. Those services
+are **how the organization keeps transcripts and documents alive**. Same
+word, different job.
 
 ## Building and running
 
@@ -479,10 +456,10 @@ its hops.
 
 ### The cognitive loop
 
-Layer this on [ch. 9](../9-agentic-loop/):
+Layer this inside an outer task loop:
 
 ```
-  L2  task loop     keep going / stop (goal, budget, hard cap)
+  outer task loop   keep going / stop (goal, budget, hard cap)
         |
         |  each iteration
         v
@@ -490,23 +467,24 @@ Layer this on [ch. 9](../9-agentic-loop/):
         |
         v
   inner cycle      perceive / remember / plan / execute / evaluate
-                   (may run several times in ONE L2 iteration)
+                   (may run several times in ONE outer iteration)
 ```
 
-L2 still owns **macro** iteration, convergence, and exit. The cognitive
-cycle owns **micro** "what to do next *inside* this iteration." Attention
-sits on the boundary: evaluation raises a signal; attention spends it on
-another module **without** returning to L2 yet. Only a clean step (no
-live signal) hands control back for a convergence check.
+The outer loop still owns **macro** iteration, convergence, and exit. The
+cognitive cycle owns **micro** "what to do next *inside* this iteration."
+Attention sits on the boundary: evaluation raises a signal; attention
+spends it on another module **without** returning to the outer loop yet.
+Only a clean step (no live signal) hands control back for a convergence
+check.
 
-That means one billed L2 iteration can contain: perceive, plan, execute,
-evaluate, replan, execute again. You are not paying for architecture
-cosplay. You are paying to **not** emit a glossy miss at the end of a
-shallow hop.
+That means one billed outer iteration can contain: perceive, plan,
+execute, evaluate, replan, execute again. You are not paying for
+architecture cosplay. You are paying to **not** emit a glossy miss at the
+end of a shallow hop.
 
-Termination still layers as in ch. 9 (hard cap, budget, goal, quality).
-Stagnation here is **richer**: it can fire *inside* the iteration and
-cause a pivot rather than only killing the whole run.
+Termination still layers (hard cap, budget, goal, quality). Stagnation
+here is **richer**: it can fire *inside* the iteration and cause a pivot
+rather than only killing the whole run.
 
 ### A complete cognitive agent with MCP
 
@@ -517,15 +495,13 @@ A working composition typically attaches **two** MCP servers:
   needs (search, internal APIs)
 
 Initialize an empty workspace, drop in a real query, run the loop. Then
-open the SDK trace (OpenAI dashboard or whatever you wired in
-[ch. 2](../2-llms-prompting-agents/)) and **name each span as a module**.
-If you cannot tell perception from evaluation in the trace, you assembled
-a blob.
+open the SDK trace (OpenAI dashboard or whatever you wired) and **name
+each span as a module**. If you cannot tell perception from evaluation in
+the trace, you assembled a blob.
 
-Node/`npx` for those servers is [appendix B](../appendix-b-nodejs-mcp/).
-Python env and keys are [appendix A](../appendix-a-sample-code/). MCP
-shapes and transports remain [ch. 3](../3-mcp/). This chapter assumes
-those sockets work so it can talk about **routing**, not about STDIO.
+Node/`npx` launches those servers; Python holds the agent and keys. This
+chapter assumes those sockets work so it can talk about **routing**, not
+about STDIO.
 
 Keep constructors boring: one typed module each, one workspace, attention
 as control flow. Clever recursion without a printed workspace is a
@@ -604,9 +580,9 @@ This is a **gate on structured state**. "I think…" in the output text is
 not a gate. You can unit-test the gate without calling a model: feed
 workspaces, assert decisions.
 
-Pair this with [ch. 7](../7-evaluation-and-feedback/) grounding when the
-answer must cite retrieved text. The gate answers "are we allowed to
-speak?" Grounding answers "did we speak only from sources?"
+Pair this with grounding checks when the answer must cite retrieved text.
+The gate answers "are we allowed to speak?" Grounding answers "did we
+speak only from sources?"
 
 ### Stagnation detection and strategy pivot
 
@@ -628,9 +604,8 @@ Pivot without detection is thrashing (new strategy every hop). Detection
 without pivot is a metric you ignore until `max_iterations`. You need
 both.
 
-Cap L2 iterations anyway ([ch. 9](../9-agentic-loop/) hard limit).
-Stagnation is how you spend fewer of those iterations on the same brick
-wall.
+Cap outer iterations anyway (hard limit). Stagnation is how you spend
+fewer of those iterations on the same brick wall.
 
 ### Knowledge boundary awareness
 
@@ -690,7 +665,8 @@ routes, and whether memory writes actually happen.
 ## Measuring cognitive capability
 
 Not a leaderboard. A **diagnostic** you can run on *your* agent, aimed at
-the same five messes.
+the same five messes. Steal the probes. Write them as fixtures. The test
+is the requirement.
 
 | Failure | Probe | Pass looks like | If you fail, open |
 |---|---|---|---|
@@ -699,9 +675,6 @@ the same five messes.
 | Rigor mortis | Mid-run, user says the first plan failed | Strategy changes; old plan is in history as rejected | Planning + signals |
 | Coverage bluff | Empty store on purpose | Uncertainty / escalate, not a fluent invention | Boundary + gate |
 | Tool salad | Task that needs search *then* file *then* compute | Ordered composition, not three unrelated calls | Planning graph |
-
-Steal the probes. Write them as fixtures. This is TDAD-shaped
-([ch. 7](../7-evaluation-and-feedback/)): the test is the requirement.
 
 ### Cognitive efficiency metrics
 
@@ -731,7 +704,7 @@ tell you whether the extra modules pay rent.
 
 Run the same probe set on:
 
-1. A flat ReAct agent (ch. 5 shape, one loop).
+1. A flat ReAct agent (one loop, one primitive).
 2. The cognitive composition, **empty** graph (first day).
 3. The same composition after a few dozen completed tickets (graph has
    scars).
@@ -741,8 +714,7 @@ Compare correctness, calibration, graceful-degradation rate (how often it
 The interesting plot is (2) vs (3): experience should raise calibration,
 shorten familiar types, and cut stagnation events. If (3) is worse, you
 are writing junk into the graph (noisy hops stored as gospel). Memory
-hygiene from [ch. 6](../6-memory-and-rag/) still applies: observations
-should be outcomes, not transcripts.
+hygiene still applies: observations should be outcomes, not transcripts.
 
 Celebrate **fewer incidents per thousand tickets** at similar spend, not
 a token spike you can excuse with "but calibration."
@@ -761,10 +733,8 @@ composition and monitoring instead of at a longer system prompt.
 ## Next steps in this book
 
 Cognition is the last *architecture* chapter in Lanham. What remains is
-**field craft**: five layers from [ch. 1](../1-rise-of-ai-agents/) as they
-show up in support, RAG, and research products. The Platform hole (shared
-traces, judges, stores that are not a laptop JSON file) is still
-[platform ch. 1](../../platform/1-why-a-platform/).
+**field craft**: how the five agency layers show up in support, RAG, and
+research products when a real queue is on the other side.
 
 ## Check yourself
 
@@ -784,8 +754,8 @@ traces, judges, stores that are not a laptop JSON file) is still
    implement two of the three and skip one?
 6. When should attention take the fast path, and what log would convince
    you it misfired?
-7. How does the cognitive cycle sit *inside* an L2 iteration from
-   [ch. 9](../9-agentic-loop/) without replacing L2's termination gate?
+7. How does the cognitive cycle sit *inside* an outer task-loop iteration
+   without replacing that loop's termination gate?
 8. Sketch confidence-gate decisions for: confidence 0.2; confidence 0.45
    with budget left; confidence 0.8 with an open contradiction signal.
 9. Stagnation fires. What must planning receive that it did not have on
@@ -794,5 +764,3 @@ traces, judges, stores that are not a laptop JSON file) is still
 10. You swap this architecture from incident response to internal policy
     Q&A. Which pieces do you replace, and which do you keep? Why is that
     an argument about generalization?
-
-Continue to [Field tips](../11-field-tips/).

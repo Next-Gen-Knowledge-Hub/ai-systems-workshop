@@ -5,25 +5,11 @@ Scikit-Learn, Keras, and TensorFlow* (2nd edition, Aurélien Géron;
 O'Reilly, 2019).
 
 This chapter is the map for the whole ML track. Machine learning is
-**software whose behavior is set by examples**, not by a growing pile of
-hand-written branches. Skip it and later folders look like a zoo of
-estimators, while you still cannot say whether you should train at all,
-which learning *mode* you are in, or why a nice hold-out number died
-the week the product met real traffic.
-
-**See also (do not merge).** Agency — a runtime that chooses the next
-tool — is [agents ch. 1](../../agents/1-rise-of-ai-agents/). The nested
-loops of that runtime are
-[agents ch. 9](../../agents/9-agentic-loop/). Those loops do not run
-SGD. The iceberg that says the model call is a sliver of a GenAI system
-is [platform ch. 1](../../platform/1-why-a-platform/). That iceberg is
-about **calling** a provider. This folder is about **fitting**
-parameters on *your* table. How fitted weights later sit behind a
-gateway is [platform ch. 3](../../platform/3-model-service/). The rows
-that keep these jobs apart live in
-[`TRADEOFFS.md`](../../TRADEOFFS.md) ("Train a model vs call a model vs
-wrap a loop", "RL agent vs LLM agent", "Batch vs online vs session
-memory").
+software whose behavior is set by examples, rather than by a growing
+pile of hand-written branches. Skip it and later folders look like a
+zoo of estimators, while you still cannot say whether you should train
+at all, which learning mode you are in, or why a nice hold-out number
+died the week the product met real traffic.
 
 ## The mental model
 
@@ -62,25 +48,19 @@ did. The provider already trained. Your job in this track starts when
 
 ## What machine learning is
 
-**Problem** — "We added AI" can mean a rule engine, a vendor API, a
-spreadsheet formula, or a fitted estimator. Design reviews stall
-because those four jobs share a slide title.
+"We added AI" can mean a rule engine, a vendor API, a spreadsheet
+formula, or a fitted estimator. Design reviews stall because those
+four jobs share a slide title. Use a working definition you can test: a
+program **learns** if its performance on a task improves after seeing
+examples, without you rewriting the decision logic by hand. The
+artifact is a **model** (parameters plus the code that applies them).
+The fuel is a **training set**. The claim you are allowed to make is a
+number on a **held-out** set.
 
-**Solution** — Use a working definition you can test: a program
-**learns** if its performance on a task improves after seeing examples,
-without you rewriting the decision logic by hand. The artifact is a
-**model** (parameters plus the code that applies them). The fuel is a
-**training set**. The claim you are allowed to make is a number on a
-**held-out** set.
-
-**Failure mode to recognise** — A dashboard that "learns" because an
-analyst edits thresholds every Friday. That is operations, not a
-learner. The thresholds did not come from a training procedure you can
-re-run.
-
-A second failure: treating "the model" as a personality. In this track
-it is a function `f(x) → ŷ` with a loss you chose. Personality, tools,
-and loops belong in the Agents folders.
+A dashboard that "learns" because an analyst edits thresholds every
+Friday is operations, not a learner. The thresholds did not come from a
+training procedure you can re-run. Treat "the model" as a function
+`f(x) → ŷ` with a loss you chose, rather than as a personality.
 
 ### Why write a learner instead of rules
 
@@ -92,12 +72,10 @@ sku will stock out.
 
 You also reach for ML when the same *kind* of problem keeps coming
 back with new data (a new market, a new sensor) and you would rather
-re-fit than re-interview domain experts for every clause.
-
-**Failure mode to recognise** — Training because the roadmap said
-"AI," then discovering the labels are the rule you already had
-("overdue if days > 30"). You spent a quarter to relearn an
-if-statement, with worse debuggability.
+re-fit than re-interview domain experts for every clause. Training
+because the roadmap said "AI," then discovering the labels are the rule
+you already had ("overdue if days > 30"), wastes a quarter to relearn
+an if-statement with worse debuggability.
 
 ```python
 # Sketch: a learner is fit(), not an if-tree you keep editing.
@@ -108,8 +86,11 @@ clf.fit(X_train, y_train)          # parameters move
 y_hat = clf.predict(X_new)         # same code, new rows
 ```
 
-That `fit` call is the whole point of the track. Later chapters change
-*how* `fit` finds parameters. They do not change the job.
+`fit` estimates the coefficients from the labeled training rows.
+`predict` applies those fixed coefficients to new rows with the same
+feature shape. That `fit` call is the whole point of the track. Later
+chapters change *how* `fit` finds parameters. They do not change the
+job.
 
 ## Application types (a survey, not a catalog)
 
@@ -123,12 +104,11 @@ Do not memorize product names. Name the **job**:
 - **Detect the unusual** (the row that does not belong).
 - **Forecast sequences** (the next reading, the next token — the
   *training* version, not a chat runtime).
-- **Control** (pick an action, see a reward — RL, later in this
-  track).
+- **Control** (pick an action, see a reward — reinforcement learning).
 
 If you cannot put the ticket on that list, you do not yet know whether
 this book is the right tool. "Make the assistant nicer" is not on the
-list. That is [agents ch. 2](../../agents/2-llms-prompting-agents/).
+list; that is product copy and interaction design.
 
 ## Supervised, unsupervised, semisupervised, reinforcement
 
@@ -151,14 +131,12 @@ the wrong split.
 
 **Supervised** is the default in Part I of HOML: you have a column you
 wish you could type for every future row. Classification vs regression
-is "discrete label" vs "number," not "harder" vs "easier."
+is "discrete label" vs "number." Neither is automatically harder.
 
-**Unsupervised** is not "we skipped labeling." It is a different
-question: *what is the structure?* Clustering, PCA, density models.
-You will get to them in [ch. 8](../8-dimensionality-reduction/) and
-[ch. 9](../9-unsupervised/). Using k-means as if it were a classifier
-without a label policy is how "the cluster looks like fraud" becomes
-an un-auditable production rule.
+**Unsupervised** is a different question: *what is the structure?*
+Clustering, PCA, density models. Using k-means as if it were a
+classifier without a label policy is how "the cluster looks like fraud"
+becomes an un-auditable production rule.
 
 **Semisupervised** is the honest state of many companies: 2% of
 tickets labeled, 98% sitting in the warehouse. The unlabeled rows can
@@ -167,17 +145,10 @@ you are sloppy. Do not treat "we fine-tuned on everything we had" as
 semi-supervised science.
 
 **Reinforcement learning** is a learner that **acts**, sees a **reward**,
-and updates a **policy**. Gym, bandits, Q-learning, policy gradients
-live in [ch. 18](../18-reinforcement-learning/).
-
-**Failure mode to recognise** — Calling an LLM loop "RL" because the
-product team said "agent." SPAL (sense–plan–act–learn) is a *control
-loop around a frozen model*. It does not maximise a Bellman backup.
-That collision is written down in
-[`TRADEOFFS.md`](../../TRADEOFFS.md). Read
-[agents ch. 1](../../agents/1-rise-of-ai-agents/) and
-[agents ch. 9](../../agents/9-agentic-loop/) for the LLM-shaped
-agent. Stay here for the SGD-shaped one.
+and updates a **policy**. That requires a reward signal and a policy
+update. A sense–plan–act loop around a frozen language model is a
+control loop; it does not maximise a Bellman backup unless you add
+those pieces.
 
 ## Batch versus online
 
@@ -202,20 +173,16 @@ an evaluation story that is not "we shuffled a parquet file."
                                  model is already live
 ```
 
-**Problem** — Ops hears "online learning" and means "the homepage
-updates when the user talks."
+Ops sometimes hears "online learning" and means "the homepage updates
+when the user talks." In Géron, online means **the weights move**. A
+Redis transcript is session memory. Feature pipelines that *score* a
+new row with a frozen model are just **inference**. Inference can be
+real-time without any learning at all.
 
-**Solution** — In Géron, online means **the weights move**. A Redis
-transcript is not a weight update. Session memory is
-[platform ch. 4](../../platform/4-session-service/). Feature pipelines
-that *score* a new row with a frozen model are just **inference**.
-Inference can be real-time without any learning at all.
-
-**Failure mode to recognise** — A nightly batch job labeled "online"
-because it runs every night. Cadence is not the axis. The axis is
-whether `fit` saw the new rows *as a stream with an incremental API*,
-or whether you retrained from scratch on a new snapshot (still batch,
-just frequent).
+A nightly batch job labeled "online" because it runs every night is
+still batch if you retrain from scratch on a new snapshot. Cadence is
+not the axis. The axis is whether `fit` saw the new rows as a stream
+with an incremental API.
 
 ## Instance-based versus model-based
 
@@ -230,13 +197,10 @@ the expensive part. Prediction is a function of the parameters, not of
 every historical row.
 
 Most of Part I is model-based, with instance-based methods as a useful
-contrast. k-NN on a million customers is a product decision, not a
-default.
-
-**Failure mode to recognise** — Shipping "the model" as a pickle of
-the entire training frame and calling it a neural net. You shipped a
-lookup. That can be valid. It is not the same ops envelope as a 12 KB
-linear model.
+contrast. k-NN on a million customers is a product decision. Shipping
+"the model" as a pickle of the entire training frame and calling it a
+neural net ships a lookup. That can be valid. It is a different ops
+envelope from a 12 KB linear model.
 
 ## Challenges
 
@@ -245,71 +209,55 @@ name.
 
 ### Insufficient data
 
-**Problem** — The estimator is hungry and you have 80 labeled rows.
-
-**Solution** — More labels beat a fancier family *until* you have
-shown that the family is the bottleneck. Transfer, data collection,
-and a simpler model are the grown-up responses. Deep nets in Part II
-make this worse, not better.
-
-**Failure mode to recognise** — A leaderboard win on 80 rows with a
-200-tree ensemble. You memorized the sheet.
+The estimator is hungry and you have 80 labeled rows. More labels beat
+a fancier family *until* you have shown that the family is the
+bottleneck. Transfer, data collection, and a simpler model are the
+grown-up responses. Deep nets make data hunger worse, not better. A
+leaderboard win on 80 rows with a 200-tree ensemble memorized the
+sheet.
 
 ### Nonrepresentative data
 
 The training distribution is not the production distribution: only
 weekday traffic in train, weekends in prod; only one plant; only users
-who accepted the old UI.
-
-**Failure mode to recognise** — A beautiful metric on last year's
-cohort, then a silent collapse after a market launch. Sampling bias is
-not a stats-class curiosity. It is "we trained on the people who
-already converted."
+who accepted the old UI. A beautiful metric on last year's cohort, then
+a silent collapse after a market launch, is sampling bias. You trained
+on the people who already converted.
 
 ### Poor quality
 
 Missingness that is not random, duplicated ids, clocks in the wrong
-timezone, labels that mean three things, sensors that stick.
-
-**Solution** — Cleaning is model work. It is not a prelude you skip so
-you can get to XGBoost. Chapter 2 will put cleaning *inside* the
-pipeline so it cannot leak.
-
-**Failure mode to recognise** — Imputing with the global mean
-*including the test fold*, then bragging about RMSE.
+timezone, labels that mean three things, sensors that stick. Cleaning
+is model work. It is not a prelude you skip so you can get to XGBoost.
+Imputing with the global mean *including the test fold*, then bragging
+about RMSE, is a leak dressed as hygiene.
 
 ### Irrelevant features
 
-Garbage-in is not poetic. A learner given 200 columns of ids, leaked
-timestamps, and one useful signal will often prefer the leak.
-
-**Solution** — Feature selection and domain sense *before* you
-celebrate a score. "We have 400 features" is not a boast.
-
-**Failure mode to recognise** — `user_id` or `request_time` as a top
-feature. You did not learn fraud. You learned which customers you
-already knew, or that night-shift volume is different.
+A learner given 200 columns of ids, leaked timestamps, and one useful
+signal will often prefer the leak. Feature selection and domain sense
+come before you celebrate a score. "We have 400 features" is not a
+boast. If `user_id` or `request_time` is a top feature, you learned
+which customers you already knew, or that night-shift volume is
+different.
 
 ### Overfitting
 
 The model explains the training sheet, including the noise. Hold-out
 hurts. Regularization, more data, simpler hypotheses, and early
-stopping (ch. 4) are the toolkit. Cross-validation that you keep
-peeking at is a slow-motion overfit of the *validation* set.
-
-**Failure mode to recognise** — Train accuracy 99%, val 91%, prod 70%,
-and a story about "concept drift" that starts the same week you added
-20 polynomial features.
+stopping are the toolkit. Cross-validation that you keep peeking at is
+a slow-motion overfit of the *validation* set. Train accuracy 99%, val
+91%, prod 70%, starting the same week you added 20 polynomial
+features, is capacity you did not pay for with data — often blamed on
+"concept drift" when the real story is memorization.
 
 ### Underfitting
 
 The hypothesis cannot express the pattern even on train. Linear on a
 curve, two trees on a XOR-ish rule, no recency feature when the world
-is seasonal.
-
-**Failure mode to recognise** — Blaming the data when train and val
-are *both* bad and a scatter plot already shows a bend you refused to
-model.
+is seasonal. Blaming the data when train and val are *both* bad, while
+a scatter plot already shows a bend you refused to model, is
+underfitting with a story attached.
 
 ```
   HIGH TRAIN ERROR          LOW TRAIN, HIGH VAL
@@ -319,18 +267,16 @@ model.
    or too little signal)     too little data)
 ```
 
-You will diagnose this with **learning curves** in
-[ch. 4](../4-training-models/). This chapter only needs you to have
-the two names.
+You will diagnose this with **learning curves** later in the book.
+This chapter only needs you to have the two names.
 
 ## Testing, validating, and the split you will be tempted to cheat
 
-**Problem** — You tune until the test number looks like the slide.
-
-**Solution** — Split first. Hide the test set. Use the training mass
-for fitting, and a **validation** path (hold-out slice or, better,
-cross-validation) for model *selection* and hyperparameters. Touch the
-test set **once**, as a confirmation, not as a knob.
+You tune until the test number looks like the slide. Split first. Hide
+the test set. Use the training mass for fitting, and a **validation**
+path (hold-out slice or, better, cross-validation) for model
+*selection* and hyperparameters. Touch the test set **once**, as a
+confirmation.
 
 ```
   ALL LABELED ROWS
@@ -356,14 +302,13 @@ rows are not drawn like production, even if they never appeared in
 phone photos in prod. You then overfit the *mismatch*, not the task —
 you tune until the lab set is perfect and the field still fails.
 
-**Failure mode to recognise** — A "test" set that was rebuilt after
-each disappointing number. That is a second training set with extra
-steps. Another: sampling val uniformly when the metric that matters is
-the rare class, then wondering why production recall collapsed.
+A "test" set that was rebuilt after each disappointing number is a
+second training set with extra steps. Sampling val uniformly when the
+metric that matters is the rare class leaves you wondering why
+production recall collapsed.
 
-Chapter 2 will make the split mechanical (including **stratified**
-sampling). This chapter only needs the ethic: **generalization is a
-protocol, not a vibe.**
+Generalization is a protocol. Later chapters make the split mechanical
+(including **stratified** sampling). This chapter only needs the ethic.
 
 ## What aged since 2019
 
@@ -378,15 +323,11 @@ protocol, not a vibe.**
 - The taxonomy here (supervised / batch / model-based / hold-out) is
   still the one you need when a 2026 design doc says "we will just
   use AI." The confusion with session memory, provider APIs, and
-  agent loops got *worse*, which is why the See-also links exist.
+  agent loops got *worse*.
 - You do not need new math to start. You need the habit of naming the
   learning mode and locking a test set.
 
 ## Check yourself
-
-Good answers name the takeaway, the failure mode, and a system you
-have actually touched (tickets, billing, search, sensors, not a toy
-CSV).
 
 1. A stakeholder says the new rules engine "is ML because it is
    smart." What is missing from the definition in this chapter, and
@@ -395,12 +336,12 @@ CSV).
    regress, rank, group, or detect-unusual? What disaster happens if
    you pick the wrong job name and therefore the wrong metric?
 3. Where does *your* last "AI feature" sit on train-weights vs
-   call-a-provider vs wrap-a-loop
-   ([`TRADEOFFS.md`](../../TRADEOFFS.md))? What would break if you
-   merged those three into one ops playbook?
+   call-a-provider vs wrap-a-loop? What would break if you merged
+   those three into one ops playbook?
 4. Someone wants "online learning" because the chatbot must remember
-   the user. Which axis are they on, and which folder actually owns
-   that memory?
+   the user. Which axis are they on (weights moving vs session
+   memory), and what would an incremental `partial_fit` look like
+   instead?
 5. Instance-based vs model-based: for a fraud table you know, which
    one were you implicitly shipping, and what fails at predict-time
    or at train-time if you guessed wrong?
@@ -417,8 +358,5 @@ CSV).
    data mismatch, or label leakage? Give one example of each from a
    system you know, and the check you would run tomorrow.
 10. Why is an LLM agent loop not reinforcement learning as this
-    chapter uses the word? Point at the two Agents folders and at
-    what would have to exist (reward, policy update) before you would
-    agree.
-
-Continue to [End-to-end Machine Learning project](../2-end-to-end-project/).
+    chapter uses the word? What would have to exist (reward, policy
+    update) before you would agree?

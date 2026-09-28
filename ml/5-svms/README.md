@@ -48,21 +48,17 @@ points are the **support vectors**. Move a point that is not a
 support vector, and the solution does not budge. Move a support
 vector, and the street tilts.
 
-This is a different objective from logistic regression
-([ch. 4](../4-training-models/)). Logistic cares about every row's
-log loss. A hard-margin SVM cares about the worst-placed rows *on
-the frontier*. That is why outliers are so loud here.
+This is a different objective from logistic regression. Logistic cares
+about every row's log loss. A hard-margin SVM cares about the
+worst-placed rows *on the frontier*. That is why outliers are so loud
+here.
 
-**Problem** — A single mislabeled or extreme point pinches the
-margin to a slit, or makes "perfect separation" impossible.
-
-**Solution** — **Soft margin** (next section). Almost always what you
-run.
-
-**Failure mode to recognise** — An SVM with no scaling on mixed-unit
-tables. Another: celebrating a linear SVM on a XOR-ish pair of
-features and then "proving SVMs don't work," when you needed a kernel
-or an explicit map.
+A single mislabeled or extreme point pinches the margin to a slit, or
+makes "perfect separation" impossible. **Soft margin** (next section)
+is almost always what you run. An SVM with no scaling on mixed-unit
+tables lies about width. Celebrating a linear SVM on a XOR-ish pair of
+features and then "proving SVMs don't work" usually means you needed a
+kernel or an explicit map.
 
 ```python
 from sklearn.pipeline import Pipeline
@@ -76,9 +72,12 @@ linear = Pipeline([
 linear.fit(X_train, y_train)
 ```
 
-`LinearSVC` (or `SGDClassifier(loss="hinge")`) is the scalable linear
-path. `SVC(kernel="linear")` is the same geometry with a different
-solver, often slower on large m.
+`StandardScaler` puts features on a common scale so margin width is
+meaningful. `LinearSVC` then finds a large-margin linear separator;
+`C` is the soft-margin tax (below). `LinearSVC` (or
+`SGDClassifier(loss="hinge")`) is the scalable linear path.
+`SVC(kernel="linear")` is the same geometry with a different solver,
+often slower on large m.
 
 ## Soft margin
 
@@ -99,15 +98,17 @@ margin, at a cost. The knob is **C** (sklearn):
   low  C:  fat street, tolerates a few trespassers
 ```
 
-C is not "regularization α" from Ridge, but it plays a similar
-social role: **how expensive is complexity / fussiness.** Tune it
-with the CV protocol from [ch. 2](../2-end-to-end-project/), not by
-eyeballing a 2D plot on the test set.
-
-**Failure mode to recognise** — Grid-searching C on accuracy with a
-1% positive class ([ch. 3](../3-classification/)). You will pick a
-street that never flags the rare class. Use a metric that matches
-the decision.
+Walk a numeric intuition. Suppose a fraud table where one mis-keyed
+amount is a million times larger than typical rows. At high C the
+optimizer spends the street's width trying to keep that outlier on the
+correct side of the margin — the boundary tilts toward noise. At low C
+the model accepts a few margin violations; the street stays wide; the
+outlier becomes one of a handful of support vectors that are *allowed*
+to trespass. C is not "regularization α" from Ridge, but it plays a
+similar social role: **how expensive is complexity / fussiness.** Tune
+it with CV on a metric that matches the decision. Grid-searching C on
+accuracy with a 1% positive class picks a street that never flags the
+rare class.
 
 Class weight (`class_weight="balanced"`) is sometimes the more
 honest lever than cranking C when priors are ugly.
@@ -131,15 +132,11 @@ expanded space, without allocating the expanded columns. `SVC` with
 `kernel="poly"` has degree, `C`, and `coef0` (how much the high
 degree is allowed to dominate).
 
-**Problem** — Degree 8 "because it can."
-
-**Solution** — Start low. Watch val error. A polynomial kernel can
-still overfit; it just overfits in a different memory envelope than
-an explicit map.
-
-**Failure mode to recognise** — Explicit degree-8 expansion on 40
-raw columns, RAM death, then a story about "SVMs need Spark." You
-needed a kernel or a different family, not a cluster.
+Degree 8 "because it can" still overfits; it just overfits in a
+different memory envelope than an explicit map. Start low. Watch val
+error. Explicit degree-8 expansion on 40 raw columns, RAM death, then
+a story about "SVMs need Spark" usually means you needed a kernel or a
+different family.
 
 ### Similarity features and the RBF kernel
 
@@ -168,9 +165,10 @@ rbf = Pipeline([
 ])
 ```
 
-`gamma="scale"` is a sane default, not a law. Grid **log-spaced** C
-and γ. They interact. A 2D heatmap of CV scores on (C, γ) is more
-honest than two independent 1D sweeps.
+`SVC(kernel="rbf")` fits a kernel SVM whose similarity is a Gaussian
+bell; `gamma="scale"` sets γ from feature variance (a sane default,
+not a law). Grid **log-spaced** C and γ. They interact. A 2D heatmap
+of CV scores on (C, γ) is more honest than two independent 1D sweeps.
 
 ### Complexity (practical, not appendix C)
 
@@ -180,15 +178,14 @@ honest than two independent 1D sweeps.
 - **Kernel SVM**: you (implicitly) deal with an **m × m** similarity
   structure. Training often grows **worse than quadratic** in m.
   Fine for thousands of rows. Painful for hundreds of thousands,
-  unless you approximate (linear, Nystroem, or "just use trees /
-  HistGradientBoosting").
+  unless you approximate (linear, Nystroem, or trees /
+  HistGradientBoosting).
 - **Prediction**: kernel SVM scores against **support vectors**. Many
   support vectors ⇒ slower predict. A tiny C / smoother γ can reduce
   that count; it can also underfit.
 
-**Failure mode to recognise** — `SVC(kernel="rbf")` on a million
-rows because it won a 5,000-row notebook. The algorithm did not
-"fail." You left its complexity class.
+`SVC(kernel="rbf")` on a million rows because it won a 5,000-row
+notebook did not "fail." You left its complexity class.
 
 ## SVM regression
 
@@ -211,12 +208,9 @@ the tube are fine; points outside become support vectors** and pull.
 Use `LinearSVR` / `SVR` with the same scaling rule. Regression SVMs
 are less fashionable than gradient boosting on tables, but the
 **ε-insensitive** loss is a real product choice: you may not care
-about errors smaller than a sensor's noise floor.
-
-**Failure mode to recognise** — Tuning ε on RMSE until the tube is
-zero, at which point you have a very expensive, kernelized, "care
-about every residual" model. You paid SVM prices for a job Ridge
-might have done.
+about errors smaller than a sensor's noise floor. Tuning ε on RMSE
+until the tube is zero buys a very expensive, kernelized, "care about
+every residual" model — SVM prices for a job Ridge might have done.
 
 ```python
 from sklearn.svm import LinearSVR, SVR
@@ -227,6 +221,9 @@ svr = Pipeline([
 ])
 ```
 
+`SVR` fits a tube of width `epsilon` in the RBF feature space; points
+inside the tube do not contribute to the loss.
+
 ## Under the hood (intuition only)
 
 Stay at the level you can draw. Leave the KKT wall of Greek letters
@@ -236,8 +233,8 @@ in the book's appendix.
 
 The model is still a **score** w·x + b (in the linear case). Sign
 gives the class; magnitude is distance from the street's center
-line. Thresholding that score is allowed — chapter 3's operating
-point still applies. `decision_function` is the object behind
+line. Thresholding that score is allowed — the operating point is
+still a product choice. `decision_function` is the object behind
 `predict`.
 
 Platt-style probabilities (`probability=True` on `SVC`) are an
@@ -266,9 +263,8 @@ RBF are the two you will actually type. The trick is **legal
 laziness**: same geometry as "map, then linear SVM," cheaper when φ
 would be wide or infinite (RBF).
 
-Illegal laziness: a kernel on **unscaled** x, or a custom kernel
-that is not actually a valid similarity. Garbage in, curved garbage
-out.
+A kernel on **unscaled** x, or a custom kernel that is not actually a
+valid similarity, produces curved garbage.
 
 ### Online SVMs
 
@@ -278,10 +274,9 @@ SGD (`SGDClassifier(loss="hinge")`) is the chapter's practical
 "online SVM." You get a linear street that **updates**, not a kernel
 matrix that grows forever.
 
-**Failure mode to recognise** — "We need online RBF SVM" as a
-requirement. You probably need either a periodically refit kernel
-model on a window, or a different family that was born incremental.
-Hinge+SGD is the honest online cousin.
+"We need online RBF SVM" as a requirement usually means either a
+periodically refit kernel model on a window, or a different family
+that was born incremental. Hinge+SGD is the honest online cousin.
 
 ```
   LinearSVC / hinge SGD     primal, large m, linear street
@@ -304,9 +299,6 @@ Hinge+SGD is the honest online cousin.
   notebooks. They sit between "linear" and "full RBF."
 
 ## Check yourself
-
-Good answers need the takeaway, the failure mode, and a system you
-have actually classified or scored.
 
 1. In a 2-class problem you know (fraud vs not, defect vs not),
    what would a "widest street" *mean*, and which rows would you
@@ -336,7 +328,5 @@ have actually classified or scored.
    on, and when has a "probability" from a margin model misled a
    threshold in a system you know?
 10. Online hinge-SGD vs kernel SVM: which one can follow a stream,
-    and what confusion with chapter-1 "online learning" or with
-    session memory would you shut down in a design review?
-
-Continue to [Decision Trees](../6-decision-trees/).
+    and what confusion with "online" meaning session memory would you
+    shut down in a design review?

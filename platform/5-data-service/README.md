@@ -11,11 +11,8 @@ Data remembers what Legal published last Tuesday. Skip this chapter and
 every workflow either stuffs a PDF into the prompt (cost, noise, stale
 pages) or each team ships a private chunker (sprawl with extra vectors).
 
-The Agents track is a different book. Agent-shaped RAG — retrieve as a
-tool, reformulate the query, maybe retrieve again — lives in
-[agents ch. 6](../../agents/6-memory-and-rag/). This folder stays on the
-**Data Service**: isolated indexes, one ingestion pipeline, hybrid search
-the organization can operate. Mention that agent chapter. Do not rewrite it.
+This folder stays on the **Data Service**: isolated indexes, one
+ingestion pipeline, and hybrid search the organization can operate.
 
 ## The mental model
 
@@ -51,16 +48,10 @@ table. Embedding model, chunker, and corpus are frozen together so a
 support query cannot "helpfully" retrieve a sealed legal memo, and so
 vectors from two models never share a similarity operator.
 
-Chapter 1 called this half of **context-aware intelligence**.
-[Session Service](../4-session-service/) is conversational state. This
-service is the library. Mixing the two is how "as I mentioned yesterday,
-our enterprise discount" disappears into a PDF corpus that never heard
-Maria speak.
-
-Trade-offs for vector-only vs keyword-only vs hybrid, and for isolated
-indexes vs one mega-corpus, are on one screen in
-[`TRADEOFFS.md`](../../TRADEOFFS.md) (RAG table). Use this folder for the
-*service* that implements those rows.
+Chapter 1 called this half of **context-aware intelligence**. The
+Session Service holds conversational state. This service is the library.
+Mixing the two is how "as I mentioned yesterday, our enterprise
+discount" disappears into a PDF corpus that never heard Maria speak.
 
 ## From documents to searchable knowledge
 
@@ -109,9 +100,9 @@ keeps unrelated knowledge apart. In this service that unit is an
 **index**: a named, isolated collection with its own embedding
 configuration and search behavior.
 
-Sessions in chapter 4 each own a transcript. Indexes each own a corpus.
-A team might keep product docs in one index, HR policy in another,
-runbooks in a third. The names are cheap. The isolation is the feature.
+Sessions each own a transcript. Indexes each own a corpus. A team might
+keep product docs in one index, HR policy in another, runbooks in a
+third. The names are cheap. The isolation is the feature.
 
 ### Why isolation matters
 
@@ -138,16 +129,16 @@ consumer factory-reset wiki.
          +------------------+---------------------+
 ```
 
-Isolation is not a `WHERE team =` filter you remember to add. Filters
-fail open when someone omits them. **Scoped search** means the vector
-space itself is per index. A support query never ranks legal chunks
-because those rows are not in the candidate set.
+Isolation is stronger than a `WHERE team =` filter you remember to add.
+Filters fail open when someone omits them. **Scoped search** means the
+vector space itself is per index. A support query never ranks legal
+chunks because those rows are not in the candidate set.
 
 Isolation also lets configuration diverge. Dense regulatory prose may
 want an embedding model trained nearer that domain. API docs may want a
 smaller, cheaper model and tighter chunks. Chunk size that is right for
-a FAQ is wrong for a statute. Independent knobs are why you do not run
-one global "company brain" with a single `chunk_size=512`.
+a FAQ is wrong for a statute. Independent knobs are why you avoid one
+global "company brain" with a single `chunk_size=512`.
 
 Security reviews should ask: *which indexes can this workflow name?* If
 the answer is "whatever string the prompt interpolates," you have a
@@ -193,8 +184,8 @@ do we actually have?"
   is a data-destruction API. Gate it like one.
 
 `last_ingested_at` is an ops signal. An index that has not ingested in
-90 days is how "stale knowledge" from [chapter 1](../1-why-a-platform/)
-shows up as a timestamp instead of a customer complaint.
+90 days is how "stale knowledge" shows up as a timestamp instead of a
+customer complaint.
 
 Owner is not decoration. It is who gets paged when embeddings start
 failing, and who is allowed to delete.
@@ -290,10 +281,10 @@ Detection should not trust the filename alone. `policy.pdf.exe` is not a
 joke in every org. Bytes and declared type both matter; when they
 disagree, fail closed.
 
-Parsers are adapters in the same sense as model providers in
-[chapter 3](../3-model-service/): swap the PDF library without changing
-`ingest`. The Data Service owns the **interface** (`parse(bytes) ->
-sections`), not a religion about which extractor is best this year.
+Parsers are adapters in the same sense as model providers elsewhere on
+the platform: swap the PDF library without changing `ingest`. The Data
+Service owns the **interface** (`parse(bytes) -> sections`), and leaves
+room to change which extractor is best this year.
 
 ### Metadata: the filtering foundation
 
@@ -320,8 +311,8 @@ Carry metadata **onto every chunk**. A hit that cannot name its source
 document is a citation you cannot defend. Filters that exist only on the
 parent row and not on the chunk row will be forgotten under load.
 
-Do not overload metadata with the full text. It is a sidecar, not a
-second corpus.
+Keep metadata as a sidecar. The full text already lives on the chunk;
+duplicating it as metadata creates a second corpus to maintain.
 
 ### Chunking: breaking text into retrievable pieces
 
@@ -363,10 +354,11 @@ need parser structure. You need *some* hierarchy of breaks.
 **Structure-aware.** If extraction gave you "Return Policy for
 Electronics" as a section, keep that section as one chunk when it fits
 the token limit. If it does not, fall back to fixed or recursive *inside
-the section*, not across the next heading. This is the strategy that
+the section*, staying under the next heading. This is the strategy that
 makes the parse work in stage 2 worth doing.
 
-Pick by corpus, not by blog post:
+Pick by corpus, not by blog post. After you know what the documents look
+like, this table is a starting bias:
 
 | Corpus | Bias |
 |---|---|
@@ -387,10 +379,10 @@ query.
 
 The platform does not hard-code the vendor model. Teams pick what fits
 the content. The platform owns versioning, provider abstraction, retries,
-and **cost tracking**. That is why embeddings go through the
-[Model Service](../3-model-service/), not a second `openai.embeddings`
-client in the Data Service. Fallback and dollar attribution already
-exist. Duplicating them is sprawl with extra floating point.
+and **cost tracking**. That is why embeddings go through the Model
+Service, with a shared provider path rather than a second
+`openai.embeddings` client inside Data. Fallback and dollar attribution
+already exist. Duplicating them is sprawl with extra floating point.
 
 Dimensionality is a knob with a bill. Higher dimensions can capture
 finer distinctions and cost storage, memory, and latency on every
@@ -401,9 +393,8 @@ Batch embed on ingest. Embed the **query at search time** with the same
 model. A mismatch is not a warning; it is invalid geometry.
 
 Watch the invoice. Ingest of a 2,000-page PDF is an embedding job, not
-a free side effect of "we have RAG now." Observability in
-[chapter 7](../7-observability/) should see those tokens as Data Service
-work, not "misc AI."
+a free side effect of "we have RAG now." Observability should see those
+tokens as Data Service work, attributed to ingest rather than misc AI.
 
 ### Document lifecycle
 
@@ -423,8 +414,8 @@ the caller (CMS id, git path, policy number) and fall back to a
 deterministic hash of a stable name, not of bytes (bytes change every
 revision).
 
-Retraction is a first-class event: delete the document (next section),
-do not "ingest empty" and hope.
+Retraction is a first-class event: delete the document (next section).
+An empty ingest is a poor substitute for an explicit delete.
 
 ### Document management
 
@@ -469,11 +460,10 @@ metadata, you will debug two systems.
 
 Ingest ends with "put these vectors somewhere." The platform's job is a
 **storage abstraction**: write during ingest, read at query time,
-backends swappable. Same pattern as session storage in chapter 4:
-abstract interface, one serious implementation (here, Postgres +
-pgvector), room for others. The operations are not the same — sessions
-are rows by id; vectors are similarity over arrays — but the *adapter*
-idea is identical.
+backends swappable. Same adapter idea as session storage: abstract
+interface, one serious implementation (here, Postgres + pgvector), room
+for others. The operations differ — sessions are rows by id; vectors are
+similarity over arrays — and the adapter pattern still applies.
 
 ### Vector store interface
 
@@ -499,7 +489,7 @@ or collection per index) so a bug cannot search across tenants.
   hits: chunk text, score, document id, metadata, maybe heading.
 
 Same `SearchResult` type for vector and (later) keyword paths. Fusion
-and the SDK should not care which path produced a row.
+and the SDK should treat either path as the same row shape.
 
 ### Choosing a backend
 
@@ -514,7 +504,8 @@ The market is still settling. Two families:
   out for ANN. Further scale, extra ops (or a fully managed bill).
   Pinecone-class services trade control for not running the thing.
 
-Choose on **operations and isolation**, not on blog-bench QPS.
+Choose on **operations and isolation**, and leave blog-bench QPS for a
+later comparison. Once you know your ops posture, this table is a lean:
 
 | You already… | Lean toward |
 |---|---|
@@ -523,8 +514,9 @@ Choose on **operations and isolation**, not on blog-bench QPS.
 | Cannot operate another stateful system | Managed vector **or** pgvector on the DB you already pay people to run |
 | Must keep vectors next to relational metadata and transactions | pgvector (or similar) |
 
-The interface exists so this choice is not a rewrite of ingest. Do not
-let the SDK speak Pinecone in one workflow and `<=>` in another.
+The interface exists so this choice is not a rewrite of ingest. Keep the
+SDK free of backend dialects so one workflow does not speak Pinecone
+while another speaks `<=>`.
 
 ### A pgvector-shaped example
 
@@ -570,7 +562,7 @@ method that:
   get IndexConfig.embedding_model
        |
        v
-  Model Service.embed(query)     // not a second provider SDK
+  Model Service.embed(query)     // shared provider path
        |
        v
   VectorStore.search(index, embedding, top_k, filters, threshold)
@@ -594,13 +586,12 @@ Embeddings smear those strings into a cloud of "errors" and "problems."
 The hit you needed had the exact token.
 
 Keyword search has the opposite failure: paraphrase misses, exact tokens
-hit. Production corpora need **both**. Hybrid is not a fashion. It is
-how mixed questions (natural language + codes) get one ranked list.
+hit. Production corpora need **both**. Hybrid is how mixed questions
+(natural language + codes) get one ranked list.
 
-See the RAG rows in [`TRADEOFFS.md`](../../TRADEOFFS.md): vector-only
-misses identifiers; keyword-only misses paraphrase; hybrid plus fusion
-costs two retrievals and some tuning. Isolated indexes still apply — you
-fuse within an index, not across the company.
+Vector-only misses identifiers. Keyword-only misses paraphrase. Hybrid
+plus fusion costs two retrievals and some tuning. Isolated indexes still
+apply — you fuse within an index, keeping each team's corpus separate.
 
 ### Keyword search on the platform
 
@@ -644,8 +635,8 @@ full scan wearing a costume.
 
 You now have two lists. Vector scores are roughly cosine in a bounded
 range. Keyword scores are a different universe (unbounded ranks, or
-`ts_rank` in its own scale). **Do not add the scores.** Normalizing them
-into one numeric religion is brittle across corpora.
+`ts_rank` in its own scale). Adding the scores mixes incompatible units.
+Normalizing them into one numeric religion is brittle across corpora.
 
 **Reciprocal Rank Fusion** ignores magnitudes and uses **ranks**. Each
 appearance of a chunk contributes `1 / (k + rank)` with `k` a constant
@@ -663,7 +654,7 @@ low, stays low.
 
 No training. No score calibration. You still must choose `top_k` per
 leg (often fetch more than you return, then fuse, then cut). You still
-must not fuse across indexes.
+fuse within one index.
 
 RRF is not magic if both legs are wrong. Garbage parsers in, fused
 garbage out.
@@ -696,8 +687,8 @@ otherwise you cannot tell whether a miss was vector, keyword, or fusion.
 
 Workflows that know the query is *only* an error code can still call
 keyword search. Workflows that know it is *only* paraphrase can call
-vector search. Hybrid is the default for mixed traffic, not a
-requirement to always spend twice.
+vector search. Hybrid is the default for mixed traffic; spend twice when
+the query shape needs both legs.
 
 ## Service contract and complete retrieval flow
 
@@ -717,41 +708,38 @@ metadata.
 
 The contract is how you stop each language binding from inventing a
 fourth notion of index. SDK: `platform.data.ingest(...)` and
-`platform.data.hybrid_search(...)` should not mention pgvector.
+`platform.data.hybrid_search(...)` should stay free of pgvector details.
 
-End-to-end, Maria's "return policy for electronics?" from
-[chapter 1](../1-why-a-platform/) looks like this — still not
-`openai.chat()`:
+End-to-end, Maria's "return policy for electronics?" looks like this —
+still composed of platform calls rather than a raw vendor chat SDK:
 
 1. Gateway authenticates; workflow starts.
 2. Session loads that she already talked about a laptop.
 3. **Data:** hybrid search on `support.policies` with
-   `audience=customer`. Chunks cite the current PDF, not last year's
-   FAQ pasted in a prompt.
+   `audience=customer`. Chunks cite the current PDF, with last year's
+   FAQ left out of the prompt paste.
 4. Model generates with those chunks in context.
 5. Observability records retrieval latency, embedding tokens, hit ids
    — so a bad answer can be blamed on a miss, a bad chunk, or the
-   model, not "AI."
+   model, with room to distinguish those causes.
 
-If step 3 searches the wrong index, guardrails in
-[chapter 6](../6-tools-and-guardrails/) will not save you. Isolation is
-a data-plane control, not a content filter.
+If step 3 searches the wrong index, content filters will not save you.
+Isolation is a data-plane control; treat it as one before you add
+prompt-side checks.
 
 ### What this service is not
 
 It is not conversational memory. "Our enterprise discount" said in chat
-belongs in Session (and maybe model-managed memories), not in a PDF
-index you forgot to update.
+belongs in Session (and maybe model-managed memories). A PDF index you
+forgot to update will not carry that fact reliably.
 
 It is not an agent loop. Retrieving twice because the first hits were
-weak is **agentic RAG** — Agents track, chapter 6. This service offers
-search as a reliable call. The workflow or agent decides whether to
-call it again.
+weak is a decision the workflow or agent makes. This service offers
+search as a reliable call; the caller decides whether to call it again.
 
 It is not evaluation. Chunk quality and "did the answer use the hit"
-are [chapter 7](../7-observability/) and the Agents eval chapter. You
-still instrument ingest and search so those judges have something to
-score.
+belong with observability and eval. You still instrument ingest and
+search so those judges have something to score.
 
 ## Check yourself
 
@@ -783,5 +771,3 @@ score.
 10. Draw Maria's question through gateway, session, data, and model.
     Where do metadata filters belong, and what happens if the workflow
     is allowed to pass any `index_name` string?
-
-Continue to [Tools and guardrails](../6-tools-and-guardrails/).

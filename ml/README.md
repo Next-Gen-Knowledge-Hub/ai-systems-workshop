@@ -5,11 +5,8 @@ Scikit-Learn, Keras, and TensorFlow*, 2nd edition** (O'Reilly, 2019). This
 track stays on **how a model is learned from data** — sklearn pipelines in
 Part I, Keras/TensorFlow networks in Part II.
 
-The other books in this workshop — *AI Agents in Action* and *Designing AI
-Systems* — live in [`../agents/`](../agents/) and
-[`../platform/`](../platform/). Shared words (agent, embedding, evaluate,
-deploy, attention) are **not** merged here. Use
-[`../INDEX.md`](../INDEX.md) when you need the other angle.
+Each folder below is one chapter, and that chapter's note stands on its
+own.
 
 The 2nd edition targets **TensorFlow 2.0 / Keras** as they shipped in 2019
 and **scikit-learn** of that era. Every folder ends with **What aged since

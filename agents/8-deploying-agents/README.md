@@ -3,25 +3,6 @@
 Companion notes for **Chapter 8** of *AI Agents in Action* (2nd edition,
 Micheal Lanham; Manning, 2026).
 
-Chapters 1–7 built something that can plan, call tools, remember, and
-be scored. None of that is a product until a *user* can reach it, a
-*runtime* can host it, and a *budget* can survive it. This chapter is
-**how consumption, containers, runtimes, and a threat model turn an
-agent into a service.** Skip it and you will paste an API key into a
-browser, tunnel a laptop to the public internet, and then be surprised
-when the thing that worked in a notebook cannot time out, cannot roll
-back a prompt, and cannot say which process spent the money.
-
-The Platform track is a different book. How an organization exposes
-workflows as HTTP, streams, and jobs lives in
-[platform ch. 2](../../platform/2-sdk-and-api/). How a *shared* Model
-Service routes, caches, and bills tokens lives in
-[platform ch. 3](../../platform/3-model-service/). How a decorated
-workflow becomes a container with health checks lives in
-[platform ch. 8](../../platform/8-workflow-service/). Mention those
-folders; do not merge them into this one. This folder stays on **how
-you deploy the agent you already built**.
-
 ## The mental model
 
 Consumption shape decides runtime. Draw the user first, then pick the
@@ -65,20 +46,17 @@ barge-in speech behind a sixty-second POST.
 Cost and safety ride the same pipes: UI → gateway → front-door →
 workers / tools / model, with traces, keys, budgets, and sandbox on
 every hop. If a span cannot carry `session_id`, `turn_id`, and
-`tool_call_id`, you do not yet have this map. Eval in
-[ch. 7](../7-evaluation-and-feedback/) scored the *answer*. This
-chapter asks whether the *process* is operable.
+`tool_call_id`, you do not yet have this map. Evaluation scored the
+*answer*. This chapter asks whether the *process* is operable.
 
 ## Consuming agents
 
-**Problem** — The notebook `Runner.run()` is treated as the product.
-
-**Solution** — Name how a human (or another agent) *consumes* the
-loop. That name is the first deployment constraint.
+The notebook `Runner.run()` is treated as the product until someone
+names how a human (or another agent) *consumes* the loop. That name is
+the first deployment constraint.
 
 Three patterns show up in almost every shop. They are not quality
-tiers. They are different mouths on the same five layers from
-[ch. 1](../1-rise-of-ai-agents/).
+tiers. They are different mouths on the same agent layers.
 
 ```
   1. EMBEDDED     agent code ships with the app (often the browser)
@@ -90,8 +68,7 @@ Embedded is honest when the interaction *is* the client: voice,
 canvas, interruptible speech. Hosted API is honest when the work is a
 job with a payload: generate an image, file a ticket, research a
 topic. Agent-as-tool is honest when specialization already split the
-graph in [ch. 4](../4-multi-agent-systems/) and you do not want every
-persona in one process.
+graph and you do not want every persona in one process.
 
 ### Real-time voice in a web application
 
@@ -125,13 +102,12 @@ What "small enough" means in practice:
                                    (slow work lives here)
 ```
 
-**Problem** — Shipping a provider secret in the HTML so the demo
-connects.
-
-**Solution** — Mint an **ephemeral client secret** on a server you
-control, after the user authenticates. Short TTL. Refresh silently
-during the session. Anything in the browser is public; treat keys that
-way from the first lab, not from the first incident.
+Shipping a provider secret in the HTML so the demo connects makes
+every browser a credential leak. Mint an **ephemeral client secret**
+on a server you control, after the user authenticates. Short TTL.
+Refresh silently during the session. Anything in the browser is
+public; treat keys that way from the first lab, not from the first
+incident.
 
 Production voice still wants a backend for: auth, tool proxying,
 audit logs, budget, and anything that must not run in a tab (payments,
@@ -142,17 +118,15 @@ feel*. The server owns the *blast radius*.
 
 The second consumption pattern is the one most teams already know how
 to spell: wrap the agent in a web framework, expose a POST, return a
-payload. The book uses FastAPI around the image-generation agent from
-[ch. 7](../7-evaluation-and-feedback/) so the critic loop does not
-change — only the mouth does.
+payload. The book uses FastAPI around an image-generation agent that
+already has a critic loop — only the mouth changes.
 
 What the API must own that `Runner.run()` did not:
 
 - **Input schema.** A Pydantic (or equivalent) body, not a free-form
   string you later regret.
-- **One trace per request.** The same tracing you used in
-  [ch. 2](../2-llms-prompting-agents/) and Phoenix in chapter 7,
-  now keyed by an HTTP request id.
+- **One trace per request.** The same OpenTelemetry tracing you used
+  while developing, now keyed by an HTTP request id.
 - **Failure as HTTP.** Timeouts, missing images, model 429s become
   status codes and bodies a client can handle — not a stack trace in
   a worker log nobody reads.
@@ -167,9 +141,9 @@ What the API must own that `Runner.run()` did not:
 ```
 
 Synchronous HTTP fits work that stays inside a gateway timeout. It
-is the wrong mouth for the deep-research loop in
-[ch. 9](../9-agentic-loop/). Change the consumption pattern instead
-of stretching one POST until the load balancer gives up.
+is the wrong mouth for a deep-research loop that needs minutes. Change
+the consumption pattern instead of stretching one POST until the load
+balancer gives up.
 
 ### A web client that consumes the service
 
@@ -199,19 +173,16 @@ how barge-in dies. Master the *split*: realtime mouth, HTTP hands.
 
 ## Dockerizing agent systems
 
-**Problem** — "It runs on my laptop" is the release plan.
-
-**Solution** — Package the hosted agent as a **microservice
-container**: one focused API (or MCP server), one image, one way to
-start it. Multi-agent graphs become several containers, not a bigger
-virtualenv.
+"It runs on my laptop" is a common release plan. Package the hosted
+agent as a **microservice container**: one focused API (or MCP
+server), one image, one way to start it. Multi-agent graphs become
+several containers, not a bigger virtualenv.
 
 Agents are unusually good microservices. A persona plus tools plus a
 loop already *wants* to be a bounded context. You can swap the image
 agent without rebuilding the voice client. You can scale the worker
-that does research without scaling the front-door. That is the same
-specialization argument as [ch. 4](../4-multi-agent-systems/), now
-with process isolation.
+that does research without scaling the front-door. That is process
+isolation around specialization you already designed.
 
 ```
   browser agent
@@ -368,9 +339,8 @@ label. Three practical pipes:
 ```
 
 MCP on STDIO is a *local* wire, not a fourth production pipe. It is
-the right transport for a server on the same machine
-([ch. 3](../3-mcp/)). The moment the tool is across the network you
-are on HTTP+SSE or you are pretending.
+the right transport for a server on the same machine. The moment the
+tool is across the network you are on HTTP+SSE or you are pretending.
 
 Pick the wire per **hop**, not per company. The front-door can be
 WebSocket to the user and HTTP to the image worker and a queue to
@@ -381,8 +351,7 @@ single "we use gRPC."
 
 The pattern that adapts is a **thin front-door** (one mouth to the
 user) plus workers that each use the wire their job needs. This is
-hub-and-spoke from [ch. 4](../4-multi-agent-systems/) with latency
-labels on the spokes.
+hub-and-spoke with latency labels on the spokes.
 
 ```
                  user
@@ -402,10 +371,9 @@ labels on the spokes.
 ```
 
 Keep complexity in the workers: typed inputs, traces, budgets. A
-front-door holding a ten-page plan wanted
-[ch. 9](../9-agentic-loop/), not a fatter gateway. A worker may still
-run a flow, hub, or collaboration; the deploy diagram *hosts* that
-graph, it does not replace it.
+front-door holding a ten-page plan wanted a deeper agentic loop, not a
+fatter gateway. A worker may still run a flow, hub, or collaboration;
+the deploy diagram *hosts* that graph, it does not replace it.
 
 ### State, memory, and idempotency
 
@@ -421,13 +389,12 @@ different products even if they share a Postgres:
   fast, per session   slower, retrieved     cache by idempotency key
 ```
 
-Short-term memory is the conversational tape
-([ch. 6](../6-memory-and-rag/)). Long-term facts and documents are
-indexes you retrieve into the window — do not dump them into Redis
-"because it is memory." Side effects are neither. If `create_invoice`
-is not keyed, a retry or a double tool call from the model will
-create two invoices. That is not an LLM bug. That is a missing
-idempotency key.
+Short-term memory is the conversational tape. Long-term facts and
+documents are indexes you retrieve into the window — do not dump them
+into Redis "because it is memory." Side effects are neither. If
+`create_invoice` is not keyed, a retry or a double tool call from the
+model will create two invoices. That is not an LLM bug. That is a
+missing idempotency key.
 
 A minimal contract:
 
@@ -454,8 +421,7 @@ Three practices, minimum:
    Separate prompt versions if a prompt team ships faster than app
    release. Tool schemas get versions; a renamed argument is a
    breaking change.
-2. **Promote with gates.** Offline tests from
-   [ch. 7](../7-evaluation-and-feedback/) first, then shadow traffic,
+2. **Promote with gates.** Offline tests first, then shadow traffic,
    then a small canary, then full rollout with auto-rollback when
    SLOs dip. "We shipped to everyone because the demo was witty" is
    not a gate.
@@ -482,9 +448,9 @@ attribution.
 ### Observability
 
 You cannot fix a silent loop. The OpenAI Agents SDK speaks
-OpenTelemetry; use it. Phoenix from chapter 7 is still the lab
-notebook; in production you also want the path **UI → gateway →
-agent → tools → model** as one trace.
+OpenTelemetry; use it. Phoenix is still the lab notebook; in
+production you also want the path **UI → gateway → agent → tools →
+model** as one trace.
 
 Three metric families, because one family always lies:
 
@@ -534,8 +500,8 @@ means the user sees a worse but *coherent* experience, not a stack
 trace.
 
 Budgets are not only wall-clock. Token and dollar budgets belong on
-the same path as [ch. 9](../9-agentic-loop/) termination gates. A
-loop that cannot stop is a deploy incident, not a clever researcher.
+the same path as loop termination gates. A loop that cannot stop is a
+deploy incident, not a clever researcher.
 
 ### Cost control and model routing
 
@@ -548,15 +514,14 @@ Three levers that actually move a bill:
 
 1. **Context trimming.** Summarize history, drop unused tool schemas,
    constrain outputs. Savings are real; over-trimming breaks
-   multi-turn coherence (see memory trade-offs in
-   [ch. 6](../6-memory-and-rag/)).
+   multi-turn coherence.
 2. **Caching.** Prompt cache for stable system+tools; response cache
    for idempotent tools; embedding cache for repeated retrieval
    queries. Hot paths often drop a large fraction of spend with
    little quality loss — if cache keys do not leak user data.
 3. **Routing.** Easy intents → small model; vision / JSON-mode → the
    model that can actually do it; outage → fallback chain. Mis-routes
-   are quality bugs; catch them with chapter 7 eval, not with hope.
+   are quality bugs; catch them with eval, not with hope.
 
 ```
   intent
@@ -677,7 +642,7 @@ hallucinated call. Design as if both will happen this week.
   and nothing else.
 - **MCP servers** are other people's code. Authenticate, use HTTPS,
   and do not assume the community server was built for your threat
-  model ([ch. 3](../3-mcp/) taught the protocol, not the audit).
+  model.
 
 Resource limits on tools are the same idea as turn budgets on models.
 Unbounded CPU is just another runaway loop.
@@ -714,8 +679,8 @@ Defenses that compose:
   can influence: *what to look at next*, not *who it is*
 ```
 
-Grounding from [ch. 7](../7-evaluation-and-feedback/) helps. It is
-not a substitute for "the refund tool cannot take a destination URL."
+Grounding helps catch unsupported claims. It is not a substitute for
+"the refund tool cannot take a destination URL."
 
 ### Safety and policy enforcement
 
@@ -733,27 +698,6 @@ rules without hoping the persona obeys.
 Provider content filters do not know your ticket ACL. Behavioral
 policy belongs next to the tool gateway. Stay here until the agent
 you are shipping has a written threat model and a sandbox.
-
-## Where this chapter stops
-
-You now have the deploy map: embed / API / client-calling-API;
-Docker and Compose; tunnels as demos only; edge vs API vs worker;
-three wires; front-door topology; session vs knowledge vs idempotent
-tools; versioned prompts/tools/models; traces; budgets; routing; a
-threat model; IAM for three principals; secrets; sandbox; injection;
-policy.
-
-What you do **not** have yet: the three-layer **agentic loop**. That
-is the next chapter. This folder will not become a platform gateway,
-Model Service, or workflow registry. When the *organization* needs
-those, leave this directory:
-
-- [platform ch. 2 — SDK and API](../../platform/2-sdk-and-api/)
-- [platform ch. 3 — Model Service](../../platform/3-model-service/)
-- [platform ch. 8 — Workflow Service](../../platform/8-workflow-service/)
-
-Keep the front-door thin, the workers typed, and the keys out of the
-HTML.
 
 ## Check yourself
 
@@ -791,5 +735,3 @@ HTML.
 10. Cost is $0.40 per session. When is that cheap, when is it
     expensive, and which routing or cache change would you try
     *after* you can attribute value — not before?
-
-Continue to [The agentic loop](../9-agentic-loop/).

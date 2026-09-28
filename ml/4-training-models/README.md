@@ -9,14 +9,8 @@ regression is the smallest interesting machine — a weighted sum, a
 loss, a closed form or a walk downhill. Skip it and later nets, SVMs,
 and "we used Adam" are folklore. You will not know why batch size
 changes the path, why a polynomial exploded, or why ℓ2 is not a moral
-preference. Chapters 1–3 told you *what* to measure and *how not to
+preference. Earlier chapters told you *what* to measure and *how not to
 leak*. This one tells you *what `fit` is doing*.
-
-**See also (do not merge).** A platform Model Service is an adapter
-to a **provider API** —
-[platform ch. 3](../../platform/3-model-service/). This folder trains
-**your** weights. Do not merge "the model" across those jobs
-([`TRADEOFFS.md`](../../TRADEOFFS.md)).
 
 ## The mental model
 
@@ -41,36 +35,33 @@ The one sentence to remember a year from now: **training is
 optimization of a loss on parameters, and generalization is a fight
 against the extra capacity you did not pay for with data.**
 
-Two consequences. First, a learning-rate or a polynomial degree is
-not "tuning flavor"; it changes whether you converge, oscillate, or
-memorize. Second, if train error and val error tell different
-stories, you already know overfit vs underfit — you do not need a
-more exotic estimator yet.
+Two consequences. First, a learning-rate or a polynomial degree
+changes whether you converge, oscillate, or memorize. Second, if train
+error and val error tell different stories, you already know overfit
+vs underfit — you do not need a more exotic estimator yet.
 
 ## Linear regression
 
 A linear model predicts a number as a **weighted sum** of features,
-plus a bias:
+plus a bias. In words: start from a baseline θ₀, then add θ₁ times
+feature 1, θ₂ times feature 2, and so on. For a housing-shaped row
+with income and rooms:
 
 ```
-  ŷ = θ₀ + θ₁ x₁ + θ₂ x₂ + … + θₙ xₙ
+  ŷ = θ₀ + θ₁·income + θ₂·rooms + …
 ```
 
-Training usually minimizes **mean squared error** (MSE) between ŷ
-and y. That choice matches RMSE-as-selector from
-[ch. 2](../2-end-to-end-project/) and makes the math cooperative:
-the loss is a bowl (convex) in θ if features are fixed.
+Training usually minimizes **mean squared error** (MSE): average the
+squared gaps between ŷ and y. Squaring makes large misses expensive
+and yields a bowl-shaped (convex) loss in θ when features are fixed —
+friendly for optimization, and kin to RMSE as a selector.
 
-**Problem** — "Linear" sounds like the world must be a straight line
-in the raw columns.
-
-**Solution** — Linearity is in **parameters**, not in your domain
-story. You can feed ratios, logs, and polynomial expansions of x.
-The model is still linear in θ. The curve lives in the features.
-
-**Failure mode to recognise** — Interpreting θᵢ as "the causal
-effect of column i" on a table full of collinear census fields. You
-have a predictor, not a policy simulation.
+"Linear" does not require the world to be a straight line in the raw
+columns. Linearity is in **parameters**. You can feed ratios, logs, and
+polynomial expansions of x. The model is still linear in θ. The curve
+lives in the features. Interpreting θᵢ as "the causal effect of column
+i" on a table full of collinear census fields treats a predictor as a
+policy simulation.
 
 ### The normal equation
 
@@ -100,13 +91,16 @@ lin = LinearRegression()          # factorization under the hood
 lin.fit(X_train, y_train)
 ```
 
-sklearn will not make you write the inverse. It will still punish you
-if you one-hot a million ids and ask for a dense closed form.
+`LinearRegression.fit` solves the least-squares problem (via a
+numerical factorization, not a hand-written inverse). sklearn will
+still punish you if you one-hot a million ids and ask for a dense
+closed form.
 
 ## Gradient descent: batch, stochastic, mini-batch
 
 When a closed form is absent (logistic, nets) or too expensive, you
-**walk downhill**.
+**walk downhill**. In words: look at how the loss changes if you nudge
+each parameter, then step opposite that direction by a step size η.
 
 ```
   θ_next = θ − η * gradient_of_loss(θ)
@@ -114,9 +108,9 @@ When a closed form is absent (logistic, nets) or too expensive, you
 
 - **η (learning rate)** too small: you crawl. Too large: you jump
   over the bowl and diverge (loss goes NaN or oscillates).
-- **Feature scaling** ([ch. 2](../2-end-to-end-project/)) is not
-  optional here. An unscaled column stretches the bowl into a ravine.
-  GD zigzags. The closed form cares less; GD looks broken.
+- **Feature scaling** is not optional here. An unscaled column
+  stretches the bowl into a ravine. GD zigzags. The closed form cares
+  less; GD looks broken.
 
 Three ways to estimate the gradient:
 
@@ -132,17 +126,15 @@ Three ways to estimate the gradient:
   mini-batch: a thicker noisy arrow  <-- default in later deep nets
 ```
 
-**Problem** — "SGD" in a doc can mean the algorithm, the sklearn
-estimator, or "we trained a net."
-
-**Solution** — Name the **gradient estimator**. Mini-batch is what
-almost everyone runs in Part II. This chapter's SGDClassifier /
+"SGD" in a doc can mean the algorithm, the sklearn estimator, or "we
+trained a net." Name the **gradient estimator**. Mini-batch is what
+almost everyone runs for deep nets. This chapter's SGDClassifier /
 SGDRegressor are the linear, streaming version of the same idea.
 
-**Failure mode to recognise** — Learning rate and scaling left on
-defaults, loss exploding, "linear models don't work on our data."
-The bowl was a ravine. Another: declaring convergence on train loss
-while val loss already turned up (you needed early stopping).
+Learning rate and scaling left on defaults, loss exploding, "linear
+models don't work on our data" — the bowl was a ravine. Declaring
+convergence on train loss while val loss already turned up means you
+needed early stopping.
 
 ```python
 from sklearn.linear_model import SGDRegressor
@@ -157,9 +149,11 @@ pipe = Pipeline([
 pipe.fit(X_train, y_train)
 ```
 
-Schedule `eta0` and `max_iter` like you mean it. Tiny original
-sketch, not a copied listing: if the scale of x changes, `eta0`
-that used to work will lie.
+`StandardScaler` centers and scales each feature using train
+statistics. `SGDRegressor` then takes iterative steps with initial
+step size `eta0` and an inverse-scaling schedule. Schedule `eta0` and
+`max_iter` like you mean it. If the scale of x changes, an `eta0` that
+used to work will lie.
 
 ## Polynomial features and learning curves
 
@@ -177,14 +171,21 @@ poly = Pipeline([
 ])
 ```
 
-The expansion lives **inside** the pipeline so CV cannot leak, same
-ethic as [ch. 2](../2-end-to-end-project/).
+`PolynomialFeatures` builds the expanded columns; the rest of the
+pipeline scales them and fits a linear model in that space. The
+expansion lives **inside** the pipeline so CV cannot leak.
 
 ### Learning curves as diagnosis
 
 Plot **train error** and **val error** against **training-set size**
-(or against degree, or against epochs). The shapes are the
-vocabulary:
+(or against degree, or against epochs). Walk one numeric intuition:
+you have fit the same linear model on 100, 1,000, and 10,000 housing
+rows. If both train and val RMSE sit near \$80k and barely move as you
+add rows, the hypothesis is too small — underfitting; more of the same
+data will not invent a bend. If train RMSE is \$20k while val sits at
+\$70k, and the gap shrinks slowly as you add rows, you have excess
+capacity — overfitting; more data helps, and so does less capacity or
+stronger regularization.
 
 ```
   UNDERFIT                         OVERFIT
@@ -196,19 +197,15 @@ vocabulary:
                                    / regularization
 ```
 
-**Problem** — The team argues "more trees" vs "more rows" with no
-curve.
+The team argues "more trees" vs "more rows" with no curve. If both
+curves are bad and together, **underfit**. If train is great and val
+is not, **overfit**. If val is still falling when you add rows, go
+collect. If val has flattened with a gap, collecting the same
+distribution will help slowly; shrinking capacity helps now.
 
-**Solution** — If both curves are bad and together, **underfit**. If
-train is great and val is not, **overfit**. If val is still falling
-when you add rows, go collect. If val has flattened with a gap,
-collecting the same distribution will help slowly; shrinking capacity
-helps now.
-
-**Failure mode to recognise** — A validation curve computed with the
-test set. That is chapter 1's peeking, drawn as a line chart. Another:
-polynomial degree chosen on the same val you will report, ten times,
-until the curve looks "nice."
+A validation curve computed with the test set is peeking, drawn as a
+line chart. Polynomial degree chosen on the same val you will report,
+ten times, until the curve looks "nice," overfits the selection path.
 
 ## Regularized linear models
 
@@ -223,26 +220,24 @@ A closed form still exists (the matrix gets a ridge down the
 diagonal — that is the name). λ → 0 is ordinary least squares. λ →
 large is "almost a constant predictor."
 
-**Failure mode to recognise** — Ridge without scaling. The tax falls
-on whatever column happens to be in small units. You regularized
-units, not complexity.
+Ridge without scaling taxes whatever column happens to be in small
+units. You regularized units, not complexity.
 
 ### Lasso (ℓ1)
 
 Add λ Σ |θᵢ|. The geometry **drives some weights to exact zero**.
 Lasso is a feature selector in disguise. Useful when you believe
 few columns matter. Unstable when columns are clones of each other
-(it picks one of a correlated pack arbitrarily).
-
-**Failure mode to recognise** — Treating Lasso zeros as "we proved
-this sensor is irrelevant" in a collinear plant. It proved the
-optimizer picked a representative.
+(it picks one of a correlated pack arbitrarily). Treating Lasso zeros
+as "we proved this sensor is irrelevant" in a collinear plant proves
+only that the optimizer picked a representative.
 
 ### Elastic Net
 
 A mix of ℓ1 and ℓ2. Default grown-up choice when you want sparsity
 *and* a little sharing among correlated columns. You now have two
-knobs (overall strength, mix). Grid or random search from chapter 2.
+knobs (overall strength, mix). Grid or random search them with the
+same CV discipline as any other hyperparameter.
 
 ```python
 from sklearn.linear_model import Ridge, Lasso, ElasticNet
@@ -252,7 +247,8 @@ lasso = Lasso(alpha=0.01, max_iter=5000)
 enet = ElasticNet(alpha=0.01, l1_ratio=0.2, max_iter=5000)
 ```
 
-`alpha` is sklearn's λ. Start on a log grid. Always scale first.
+`alpha` is sklearn's λ; `l1_ratio` mixes Lasso into Elastic Net.
+Start on a log grid. Always scale first.
 
 ### Early stopping
 
@@ -261,11 +257,10 @@ the θ where val was best, stop when it stops improving. That snapshot
 is a regularizer: you refused to take the extra steps that only fit
 train.
 
-**Failure mode to recognise** — Early stopping on *train* loss. You
-stopped when you were still underfitting, or you never stopped
-because train keeps falling. Val is the signal. A tiny val split that
-you also used for model selection is a weak signal — prefer a
-protocol you could defend in chapter 2.
+Early stopping on *train* loss stops when you were still underfitting,
+or never stops because train keeps falling. Val is the signal. A tiny
+val split that you also used for model selection is a weak signal —
+prefer a protocol you could defend as a locked hold-out.
 
 ```
   epochs -->
@@ -277,17 +272,23 @@ protocol you could defend in chapter 2.
 
 Classification with a **linear score** squashed into a probability.
 
-**Logistic** (binary): z = θ·x, p = σ(z) = 1 / (1 + e^{−z}). Train
-by minimizing log loss (cross-entropy), not MSE. MSE on probabilities
-is a poor bowl here; log loss is the one that matches Bernoulli
+**Logistic** (binary): form a score z = θ·x, then squash it with the
+sigmoid so the output sits between 0 and 1. In words, σ(z) is near 0
+for large negative z, near 1 for large positive z, and 0.5 at z = 0.
+
+```
+  p = σ(z) = 1 / (1 + e^{−z})
+```
+
+Train by minimizing log loss (cross-entropy), not MSE. MSE on
+probabilities is a poor bowl here; log loss matches Bernoulli
 likelihood and keeps GD well-behaved.
 
 The **decision boundary** is where z = 0 (p = 0.5 if you threshold
 there): a hyperplane in feature space. Polynomial / nonlinear
 features bend the boundary the same way they bent regression.
 
-**Threshold is still a product choice** from
-[ch. 3](../3-classification/). Logistic gives you a score with a
+Threshold is still a product choice. Logistic gives you a score with a
 probabilistic *interpretation* if it is calibrated. It does not force
 you to use 0.5.
 
@@ -301,22 +302,22 @@ log = Pipeline([
 # C is 1 / regularization strength. Small C = stronger tax.
 ```
 
+`LogisticRegression` fits θ by iterative optimization of log loss;
+`C` is inverse regularization strength (small C = stronger tax).
+
 **Softmax** (multinomial): several class scores z_k, converted to a
-distribution that **sums to 1**. Predict argmax. Train with
-multiclass cross-entropy. This is the clean OvR alternative when you
-want **one** model and calibrated-ish class probabilities. Trees and
-later nets will do their own versions; the geometry started here.
+distribution that **sums to 1**. In words, each class gets an
+exponentiated score, then you divide by the sum so the shares add to
+one. Predict argmax. Train with multiclass cross-entropy. This is the
+clean OvR alternative when you want **one** model and calibrated-ish
+class probabilities.
 
-**Problem** — Softmax outputs get treated as "the model is 91% sure."
-
-**Solution** — Check calibration on a holdout. Linear softmax on
-unscaled, collinear features is a ranking tool with a confidence
-costume.
-
-**Failure mode to recognise** — Using softmax as if labels could
-overlap (multilabel tags). Softmax **fights** itself: raising one
-class's p lowers the others. Overlapping tags want independent
-sigmoids (chapter 3's multilabel story), not a single softmax.
+Softmax outputs get treated as "the model is 91% sure." Check
+calibration on a holdout. Linear softmax on unscaled, collinear
+features is a ranking tool with a confidence costume. Using softmax
+as if labels could overlap (multilabel tags) fights itself: raising
+one class's p lowers the others. Overlapping tags want independent
+sigmoids.
 
 ```
   binary logistic     p(y=1|x) = σ(θ·x)
@@ -326,7 +327,7 @@ sigmoids (chapter 3's multilabel story), not a single softmax.
 
 GD vs closed form: logistic / softmax **need** iterative solvers.
 That is why this chapter taught you η, scaling, and early stopping
-before Part II exists.
+before deep nets exist.
 
 ## What aged since 2019
 
@@ -338,18 +339,14 @@ before Part II exists.
   edition's center of gravity. Same idea: linear in θ, different
   loss. Not required to understand this chapter.
 - For tabular accuracy, histogram gradient boosting often beats a
-  hand-tuned polynomial + Elastic Net. Use that fact in
-  [ch. 7](../7-ensembles/), not as a reason to skip *why* ℓ2 and
-  learning curves exist. Boosting still overfits; the curves still
-  tell you.
-- Neural training in Part II is this chapter's mini-batch GD with
-  more layers. If this folder is fog, stop and rerun it before
-  Keras.
+  hand-tuned polynomial + Elastic Net. That is a reason to know
+  ensembles later; it is not a reason to skip *why* ℓ2 and learning
+  curves exist. Boosting still overfits; the curves still tell you.
+- A deep net is still mini-batch gradient descent on a loss, with
+  more layers. The curves, the learning rate, and ℓ2 from this
+  chapter are the same ideas with a bigger graph.
 
 ## Check yourself
-
-Good answers need the takeaway, the failure mode, and a numeric
-system you have actually fit or reviewed.
 
 1. Write the linear hypothesis for a prediction you have shipped
    (or almost shipped). What would a large θ on a collinear pair
@@ -359,7 +356,8 @@ system you have actually fit or reviewed.
    Point at a table you know.
 3. Batch vs SGD vs mini-batch: which one were you running in spirit
    (nightly full fit vs streaming updates vs default net trainer),
-   and what fails if you confuse them with "online" in chapter 1?
+   and what fails if you confuse them with "online" meaning session
+   memory?
 4. Unscaled features + GD: what does the path look like, and which
    column in a real dataset would have been the ravine?
 5. You added polynomial degree 8 because degree 2 "looked underfit."
@@ -370,14 +368,12 @@ system you have actually fit or reviewed.
    tell a plant engineer?
 7. Early stopping: what signal do you watch, and how is watching
    *train* loss a failure mode you have seen (or will now recognise)?
-8. Why is log loss the training objective for logistic, not MSE on
-   0/1? Give a badly calibrated "probability" from a system you
-   know.
+8. Why is log loss the training objective for logistic, rather than
+   MSE on 0/1? Give a badly calibrated "probability" from a system
+   you know.
 9. A 0.5 threshold on logistic output: when is that defensible, and
-   when should chapter 3's PR curve pick `t` instead? Use a rare
+   when should a precision/recall curve pick `t` instead? Use a rare
    positive from your work.
 10. Softmax vs independent sigmoids: pick a labeling scheme you have
     seen (intents vs tags). What goes wrong if you use the wrong
     head?
-
-Continue to [Support Vector Machines](../5-svms/).

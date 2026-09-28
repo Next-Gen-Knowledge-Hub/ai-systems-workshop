@@ -3,22 +3,6 @@
 Companion notes for **Chapter 5** of *AI Agents in Action* (2nd edition,
 Micheal Lanham; Manning, 2026).
 
-[Chapter 4](../4-multi-agent-systems/) gave you multiple mouths and
-typed hops. This chapter is **layer 3**: how a hop (or a whole flow)
-*thinks*. Skip this chapter and you will paste "think step by step"
-into every persona, pay for trees you do not prune, treat Reflexion
-as training, and confuse a sequential-thinking MCP server with a
-brain. Then a strong model will still skip the tool, a weak model
-will ramble, and you will not know **which pattern you actually
-ran** when the answer is fluent and wrong.
-
-The Platform track does not own this layer. Sampling knobs that
-change *how tokens are drawn* are [ch. 2](../2-llms-prompting-agents/).
-Transports for the scratchpad server are [ch. 3](../3-mcp/). Pattern
-cost, in one screen: [TRADEOFFS.md](../../TRADEOFFS.md) (reasoning
-table). This folder stays on **decomposition, planning, and the
-loops you wrap around a sampler**.
-
 ## The mental model
 
 An LLM does not wake up with a project plan. It predicts tokens.
@@ -64,10 +48,11 @@ paid for. Second, more structure is not more intelligence. A
 single-tool lookup does not want a tree. A long-horizon research
 job does not want a single forward pass and a prayer.
 
-When to add layer 3 at all (from [ch. 1](../1-rise-of-ai-agents/)):
-long horizon, many competing tools, expensive mistakes, you need
-an audit trail, or the domain sits outside the model's comfort.
-When to skip: one-shot Q&A, a strong model, a reversible act.
+Add layer 3 when the job has a long horizon, many competing tools,
+expensive mistakes, a need for an audit trail, or a domain outside
+the model's comfort. Skip it for one-shot Q&A, a strong model on
+a reversible act, and hops that already succeed with a short
+instruction.
 
 ## Understanding LLM reasoning and planning
 
@@ -91,17 +76,15 @@ phase (sometimes hidden, sometimes a visible chain) before the
 user-facing tokens. You still own whether that deliberation is
 **grounded** (tools, retrieval) and **stored** (a plan object).
 A thinking model that never calls `search` is still guessing.
-A thinking model that dumps a 4k chain into the next agent is
-still chapter 4's leakage problem.
+A thinking model that dumps a 4k chain into the next agent still
+leaks private working text across hops.
 
-**Problem** — "We switched to a reasoning model, so we deleted
-the planner."
-
-**Solution** — Native deliberation is **layer 3 inside one
-call**. It does not give you a typed plan, a tool loop, or a
-scratchpad that survives the next hop. Keep the architecture.
-Turn native effort **down** on routine tool hops (chapter 2)
-and **up** on the few steps that are actually hard.
+Teams sometimes switch to a reasoning model and delete the
+planner. Native deliberation is **layer 3 inside one call**. It
+does not give you a typed plan, a tool loop, or a scratchpad that
+survives the next hop. Keep the architecture. Turn native effort
+**down** on routine tool hops and **up** on the few steps that
+are actually hard.
 
 ### Chain-of-thought reasoning
 
@@ -112,18 +95,15 @@ spend tokens on a visible working.
 It is still **one pass** (or one pass plus hidden thinking).
 There is no environment. No tool result can contradict step 3
 unless you *also* have a loop. CoT is a way to **not skip
-arithmetic and local logic**. It is not a way to **find out
-whether the wiki page exists**.
+arithmetic and local logic**. Finding whether a wiki page exists
+needs an observe step from a tool.
 
-**Problem** — CoT is treated as a personality ("our agent is
-thoughtful") and bolted onto every node, including "format
-this JSON."
-
-**Solution** — Use CoT when the **error is in the middle of a
-chain of dependencies** (dates, constraints, "if A then not
-B"). Skip it when the hop is a retrieve, a classify, or a
-typed extract. You pay tokens either way. You only buy quality
-on the first class.
+CoT is often treated as a personality ("our agent is thoughtful")
+and bolted onto every node, including "format this JSON." Use CoT
+when the **error is in the middle of a chain of dependencies**
+(dates, constraints, "if A then not B"). Skip it when the hop is
+a retrieve, a classify, or a typed extract. You pay tokens either
+way. You only buy quality on the first class.
 
 How you invoke it, in practice:
 
@@ -146,17 +126,15 @@ What CoT does **not** do:
   the chain in the next prompt — usually a bad idea; store a
   *plan object* instead).
 
-**Problem** — You show the chain to the user because "we value
-transparency."
-
-**Solution** — The chain is a **debug artifact**. It leaks
+Teams sometimes show the chain to the user because "we value
+transparency." The chain is a **debug artifact**. It leaks
 policy, private tool traces, and sometimes a wrong path the
 model then "helpfully" includes. Log it. Eval it. Default to
 showing the **answer plus citations**, not the inner monologue.
 If a regulator needs the trail, that is a store and a redaction
 story, not a chat bubble.
 
-CoT vs model-native thinking: both can be linear deliberation.
+CoT and model-native thinking can both be linear deliberation.
 Native thinking may be hidden and billed as extra tokens you
 do not see in the answer. CoT is visible in the completion.
 For agents, **visible and parseable** beats hidden unless you
@@ -178,11 +156,10 @@ have a vendor trace that you actually retain.
      +--> thought again  until stop
 ```
 
-The difference from CoT is not "tools exist." You can CoT and
-then emit one tool call at the end. That is still a single
-plan. **ReAct is a closed loop**: each observation is allowed
-to change the next thought. Wrong query? Reformulate. Empty
-list? Try another source. Surprise error? Replan.
+You can CoT and then emit one tool call at the end. That is still
+a single plan. **ReAct is a closed loop**: each observation is
+allowed to change the next thought. Wrong query? Reformulate.
+Empty list? Try another source. Surprise error? Replan.
 
 ReAct is **reactive**. It does not require a global plan
 up front. That is a strength on lookup-heavy work (search,
@@ -193,14 +170,12 @@ paint themselves into a corner. If you need a horizon, add an
 **explicit plan** (next subsection) and make ReAct *execute*
 the plan, not replace it.
 
-**Problem** — The persona says "use tools if needed" and the
-trace is CoT-shaped: a long thought, then a final answer, zero
-calls.
-
-**Solution** — ReAct is a **runtime loop plus instructions plus
+A persona that says "use tools if needed" often produces a
+CoT-shaped trace: a long thought, then a final answer, zero
+calls. ReAct is a **runtime loop plus instructions plus
 tools**. Missing any one: you do not have ReAct. Check the
-trace spans the way [ch. 2](../2-llms-prompting-agents/) taught
-you. If LLM-1 already answers, the loop never started.
+trace spans. If the first LLM call already answers, the loop
+never started.
 
 The loop that *runs* ReAct is your `Runner` (or equivalent):
 call model → execute tool → append observation → call model.
@@ -210,15 +185,13 @@ runtime cannot come back after a tool, you have an assistant.
 Noisy traces are the tax. Every thought+act+observe is tokens
 and latency. Cap `max_turns`. Cap observation size (a 80k HTML
 dump will "reason" about ads). Treat observations as
-**untrusted data**, not as new system prompts (chapter 4's
-injection lesson still applies inside one agent).
+**untrusted data**, not as new system prompts — injection still
+applies inside one agent.
 
-**Problem** — ReAct with twelve overlapping tools and no
-persona rule for *which* tool first.
-
-**Solution** — Tool confusion is not a reasoning bug. Fix
-descriptions and split agents ([ch. 4](../4-multi-agent-systems/))
-before you add a tree.
+ReAct with twelve overlapping tools and no persona rule for
+*which* tool first is usually a tool-description and agent-
+splitting bug. Fix descriptions and split agents before you add
+a tree.
 
 ### Planning with LLMs
 
@@ -248,22 +221,20 @@ must sit in:
   ReAct or CoT *inside* a hop executes *one* line
 ```
 
-**Problem** — The "plan" is the first paragraph of a ReAct
-thought, never written to a store, then the agent searches
-for something off-plan because a snippet looked interesting.
-
-**Solution** — If the plan matters, **serialize it**. Make
-replanning a deliberate act (a tool, a hop, a typed patch),
-not a vibe in the thought channel.
+When the "plan" is only the first paragraph of a ReAct thought,
+never written to a store, the agent will search for something
+off-plan because a snippet looked interesting. If the plan
+matters, **serialize it**. Make replanning a deliberate act (a
+tool, a hop, a typed patch), not a vibe in the thought channel.
 
 Planning with LLMs is also **wrong often**. The model will
 invent a step for a tool you do not have. It will order
 independent steps as a chain (wasted latency) or parallelize
 a true dependency (wasted retries). Mitigations:
 
-- **Tool-shaped tasks.** Chapter 1: a task you cannot map to
-  a tool plus a check is still a wish. The planner should
-  speak in **your tool names**.
+- **Tool-shaped tasks.** A task you cannot map to a tool plus a
+  check is still a wish. The planner should speak in **your tool
+  names**.
 - **Coded constraints.** "Must call search before plan" is a
   flow, not a hope.
 - **Short plans.** Five lines beat a strategy memo. Long
@@ -273,9 +244,9 @@ A planner hop can *use* CoT internally to produce the `Plan`
 object. That is CoT in service of planning, not a third
 religion.
 
-When a plan must survive **sessions**, you are in
-[ch. 6](../6-memory-and-rag/), not here. This chapter's plan
-is **working memory for the job**.
+When a plan must survive **sessions**, you need a memory write
+and a later retrieval. This chapter's plan is **working memory
+for the job**.
 
 ## Instructing agents to reason and plan
 
@@ -285,8 +256,8 @@ persona, tools, orchestration, and an environment. Instructing
 cannot prompt your way into a loop the runtime does not run.
 You cannot prompt your way into a plan you throw away.
 
-Keep chapter 2's discipline: role, task, constraints, tools.
-Layer 3 adds **how to spend tokens before the act**.
+Keep role, task, constraints, and tools clear. Layer 3 adds
+**how to spend tokens before the act**.
 
 ### Applying CoT to an agent
 
@@ -307,13 +278,10 @@ What to put in instructions (and what not to):
   already owns the answer shape. CoT can live in a `reasoning`
   field; the answer lives in `answer`.
 
-**Problem** — CoT instructions on a tool-using agent, no
-mention of tools. The chain invents numbers that a calculator
-tool would have given.
-
-**Solution** — If the hop has tools, CoT must **yield to
-tools** for facts that are not in the prompt. Otherwise you
-trained a narrator.
+CoT instructions on a tool-using agent with no mention of tools
+will invent numbers that a calculator tool would have given.
+If the hop has tools, CoT must **yield to tools** for facts that
+are not in the prompt. Otherwise you trained a narrator.
 
 Sampling: CoT planners usually want **low temperature**. You
 are not brainstorming; you are trying to keep step 4 entailed
@@ -322,8 +290,7 @@ every run and cannot eval.
 
 Eval: score the **answer**, not the eloquence of the chain —
 unless the chain is the product (a tutor). A beautiful wrong
-chain is a regression. [ch. 7](../7-evaluation-and-feedback/)
-is the full story; today, at least look at the split between
+chain is a regression. At least look at the split between
 scratch and answer.
 
 A CoT hop inside a **flow** should **not** pass the chain
@@ -346,8 +313,7 @@ Toy tools (date jump, calculator, `get_status`) are valid for
 learning the rhythm. Production ReAct fails on **observation
 quality**: stack traces dumped as strings, HTML, 429 messages
 the model interprets as content. Wrap tools so the observation
-is small and structured. Failure handling is part of the
-agent ([ch. 1](../1-rise-of-ai-agents/)).
+is small and structured. Failure handling is part of the agent.
 
 ```
   persona: Think, then maybe call travel_back / travel_forward.
@@ -359,38 +325,34 @@ agent ([ch. 1](../1-rise-of-ai-agents/)).
   runner:  until final output or max_turns
 ```
 
-**Problem** — You copy a ReAct prompt from a paper into an
-agent that already has MCP servers. The paper's action syntax
+Copying a ReAct prompt from a paper into an agent that already
+has MCP servers is a common trap. The paper's action syntax
 (`Search[...]`) is not your tool schema. The model emits
-prose "Search: cats" and never calls the function.
-
-**Solution** — Instruct in **your runtime's language**. The
-schema in context is the action space. A second dialect is
-how ReAct demos work in notebooks and fail in the SDK.
+prose "Search: cats" and never calls the function. Instruct in
+**your runtime's language**. The schema in context is the action
+space. A second dialect is how ReAct demos work in notebooks and
+fail in the SDK.
 
 When ReAct should **stop**:
 
 - The persona's done-check is true (answer the user).
 - A coded gate says the artifact is complete.
 - `max_turns` (a budget, not a suggestion).
-- A guardrail trips (chapter 4).
+- A guardrail trips.
 
 When it should **not** stop: "the thought looks confident."
 Confidence is a token pattern.
 
 ReAct + MCP: the act beat can be a native function or an MCP
 tool. Same loop. The extra failure domain is transport and
-listing ([ch. 3](../3-mcp/)). If tools never appear in the
-trace, you are debugging MCP, not ReAct.
+listing. If tools never appear in the trace, you are debugging
+MCP wiring, not ReAct.
 
-**Problem** — A ReAct agent that "plans" by thinking about
-all ten steps, then executes step 1, then thinks about all
-ten steps again with a stale plan.
-
-**Solution** — Either shorten the thought (one next act) or
-**externalize** the plan and only ReAct inside the current
-step. Mixing a global essay with a local loop is how you
-pay for both and get neither.
+A ReAct agent that "plans" by thinking about all ten steps,
+then executes step 1, then thinks about all ten steps again with
+a stale plan pays for both a global essay and a local loop and
+gets neither. Either shorten the thought (one next act) or
+**externalize** the plan and only ReAct inside the current step.
 
 ## Advanced reasoning patterns with agents
 
@@ -430,13 +392,11 @@ time-sensitive UX and for problems with no cheap evaluator
 (if "score" is another frontier call on every node, the bill
 is the product).
 
-**Problem** — "We enabled ToT" by asking the model, in one
-completion, to "consider three options and pick."
-
-**Solution** — That is **CoT with a list**. Real ToT needs a
-controller: generate k candidates, score, expand, budget.
-You can approximate with several samples and a judge. You
-cannot fully invoke the search with one magic sentence.
+"We enabled ToT" by asking the model, in one completion, to
+"consider three options and pick" is **CoT with a list**. Real
+ToT needs a controller: generate k candidates, score, expand,
+budget. You can approximate with several samples and a judge.
+You cannot fully invoke the search with one magic sentence.
 Reasoning models eat *some* of this space with longer
 deliberation. Explicit search still wins when branches and
 scores are **clear**.
@@ -461,8 +421,7 @@ critique in context. The "learning" language in old write-ups
 is misleading. **Weights do not change.** You are conditioning
 on a richer prompt. If you do not persist the critique, the
 next session is amnesia. If you persist a *bad* critique, you
-reinforce it. That is [ch. 6](../6-memory-and-rag/) hygiene,
-not magic.
+reinforce it. That is memory hygiene, not magic.
 
 ```
   attempt n  -->  artifact
@@ -475,24 +434,22 @@ not magic.
 ```
 
 Compared to ToT: you explore **one path at a time** and spend
-on depth + retries, not on a wide frontier. Compared to a
-chapter 4 critique loop: it is the same *shape*, now named as
-a reasoning strategy. The critic can be code (`tests_pass()`)
-or an LLM. Code first when you can.
+on depth + retries, not on a wide frontier. The same *shape*
+as a multi-agent critique loop, now named as a reasoning
+strategy. The critic can be code (`tests_pass()`) or an LLM.
+Code first when you can.
 
-**Problem** — Reflexion with a critic that says "be more
-detailed" every time. The solver writes novels. Tokens go
-up. The answer does not.
-
-**Solution** — Feedback must be **specific and falsifiable**:
+Reflexion with a critic that says "be more detailed" every
+time makes the solver write novels. Tokens go up. The answer
+does not. Feedback must be **specific and falsifiable**:
 "step 3 used 2015 instead of 2016; recompute from the tool."
 Vague aesthetic critique is a persona bug on the judge.
 
 Fits: messy generation (code, a plan that almost works),
 tasks where the first attempt is cheap and the failure is
 detectable. Does not fit: you have no evaluator; each attempt
-has a side effect (Reflexion that retries `charge_card` is a
-incident). **Idempotent attempts** or a sandbox.
+has a side effect (Reflexion that retries `charge_card` is an
+incident). Use **idempotent attempts** or a sandbox.
 
 Reflexion is not a substitute for ReAct. If the failure is
 "needed a tool observation," go get it. Critiquing a guess
@@ -501,9 +458,7 @@ does not create a fact.
 ### Selecting the right pattern for your agents
 
 Do not collect patterns. Pick from **task shape** and **what
-you can measure**. The cheat sheet lives in
-[TRADEOFFS.md](../../TRADEOFFS.md). This section is how to
-use that table without turning it into a personality.
+you can measure**.
 
 | If the hop is... | Start with | Avoid |
 |---|---|---|
@@ -522,18 +477,15 @@ persona. Combining all adjectives in one instruction block
 keep a global plan") is how the sampler picks a vibe per
 run.
 
-**Problem** — The same agent is ToT on Monday and ReAct on
-Tuesday because the persona listed both.
-
-**Solution** — Pattern is part of the **contract**, like
-temperature. Pin it. If you need both, it is two nodes or a
-coded controller.
+When the same agent is ToT on Monday and ReAct on Tuesday
+because the persona listed both, the pattern was never part of
+the **contract**. Pin it the way you pin temperature. If you
+need both, it is two nodes or a coded controller.
 
 Cost is a product constraint. ToT and Reflexion+ToT together
 are "expect this to be slow and expensive." If the SLA is a
 chat bubble in 800 ms, you do not have that product. Use a
-smaller pattern or a smaller model on the hop
-([ch. 8](../8-deploying-agents/) for routing; mention only).
+smaller pattern or a smaller model on the hop.
 
 When the **model** gets better, you may thin the pattern, not
 the tools. Frontier deliberation is still not a filesystem.
@@ -546,9 +498,8 @@ records** the agent writes and later **reads**, so a plan can
 survive across tool calls without stuffing the entire chain
 into every completion by accident.
 
-That is layer 3 as a **tool**, which is why it showed up in
-chapter 1's tool taxonomy as a reasoning/planning tool. MCP
-is the packaging ([ch. 3](../3-mcp/)). The agent still has to
+That is layer 3 as a **tool**: a reasoning/planning tool in
+the taxonomy. MCP is the packaging. The agent still has to
 choose to call it. A silent ST server is a process you are
 paying to spawn.
 
@@ -557,10 +508,8 @@ paying to spawn.
               \-->  world tools (search, calc, fs, ...)
 ```
 
-**Problem** — "We added sequential thinking, so the agent
-plans."
-
-**Solution** — You added **external working memory**. Without
+"We added sequential thinking, so the agent plans" is a
+category error. You added **external working memory**. Without
 instructions that say *when* to write, *when* to revise, and
 *when* to stop, the model may ignore the tool (persona) or
 journal every token (cost). Treat ST like any other tool:
@@ -574,26 +523,23 @@ attach it to a trivial agent, print `list_tools`, maybe ask
 the agent to report what it sees. You are testing **wiring**,
 not intelligence.
 
-STDIO vs SSE is a chapter 3 choice. The common local story is
-`npx` plus STDIO (see [appendix B](../appendix-b-nodejs-mcp/)
-when Node is the blocker). A new subprocess is a **new empty
+STDIO vs SSE is a transport choice. The common local story is
+`npx` plus STDIO. A new subprocess is a **new empty
 scratchpad**. If you expected thoughts to survive across
 `Runner` processes, you wanted SSE or some other store. Do
 not debug "forgetting" as a reasoning failure.
 
-**Problem** — The agent lists ST in the persona as "your
-brain" and also has search. It writes thoughts about URLs it
-never fetched.
-
-**Solution** — ST is not retrieval. Persona: use world tools
-for facts; use ST to **record the plan and the current step**.
+When the agent lists ST in the persona as "your brain" and
+also has search, it may write thoughts about URLs it never
+fetched. ST is not retrieval. Persona: use world tools for
+facts; use ST to **record the plan and the current step**.
 If a thought claims a source, a later hop should see it in
 **sources**, not only in the scratchpad.
 
 Inspect with the MCP Inspector the way you would any server.
 If Inspector can call the thought tool and the agent never
-does, you have a chapter 2 persona/schema problem, not a
-planning paper to reread.
+does, you have a persona/schema problem, not a planning paper
+to reread.
 
 Keep the first agent **bored**: "you are a planning
 assistant; you have a sequential-thinking tool; list what you
@@ -619,12 +565,11 @@ Wire:
   with world tools; after each observation, **revise** the
   plan if it broke; then answer.
 
-**Problem** — ST holds a beautiful plan; world tools are
-never called; the answer matches the plan and not reality.
-
-**Solution** — The scratchpad became CoT with extra latency.
-Eval must require **tool spans**. A plan-only success is a
-fail if the product is supposed to act.
+When ST holds a beautiful plan, world tools are never called,
+and the answer matches the plan and not reality, the scratchpad
+became CoT with extra latency. Eval must require **tool
+spans**. A plan-only success is a fail if the product is
+supposed to act.
 
 Pass observations **into** the next thought (ReAct). Do not
 hope the model will remember an observation that you did not
@@ -651,10 +596,9 @@ combination needs state:
 That paragraph is a **system design**, not an instruction
 dump. If you paste all of it into one persona, you will
 get a random subset per run. Prefer **coded phases** or
-**split agents** (chapter 4): a planner that may only write
-ST + a typed plan; an executor that may only run world
-tools and patch status; a critic that may only write
-feedback.
+**split agents**: a planner that may only write ST + a typed
+plan; an executor that may only run world tools and patch
+status; a critic that may only write feedback.
 
 ```
   [ Planner: CoT ] --plan--> ST
@@ -663,11 +607,9 @@ feedback.
   [ optional ToT controller ]  scores alternative plans in ST
 ```
 
-**Problem** — One listing that enables ToT *and* Reflexion
-*and* ST *and* two world tools, then surprise at the bill.
-
-**Solution** — You built the expensive corner of the
-[TRADEOFFS.md](../../TRADEOFFS.md) table on purpose. Time it.
+One listing that enables ToT *and* Reflexion *and* ST *and*
+two world tools will surprise you at the bill. You built the
+expensive corner of the pattern table on purpose. Time it.
 Budget it. Pin the model. Do not use that agent for "what's
 the office Wi-Fi." Advanced combination is for **ambiguous,
 high-value** jobs. Low-latency paths stay on CoT-or-less.
@@ -675,8 +617,8 @@ high-value** jobs. Low-latency paths stay on CoT-or-less.
 Results will **vary by model**. A strong reasoning model may
 need less ToT. A weak model may fill ST with noise. That is
 not an argument against the store. It is an argument for
-**eval per model** ([ch. 7](../7-evaluation-and-feedback/))
-and for not treating ST content as ground truth.
+**eval per model** and for not treating ST content as ground
+truth.
 
 A few-shot **plan** in the persona (a worked example of the
 *strategy*, not a copied puzzle answer) can stabilize CoT
@@ -690,22 +632,6 @@ pass in memory. **Do not start an `npx` process to store
 three bullets.** Externalize when the plan is revised across
 many tool calls or across agents that should not share a
 thread.
-
-## See also
-
-Same layer, different sockets — do not merge the chapters.
-
-- **[ch. 3 — MCP](../3-mcp/)** — STDIO vs SSE, listing tools,
-  process lifetime. ST is a server; this chapter is why an
-  agent would call it.
-- **Reasoning pattern costs:**
-  [TRADEOFFS.md](../../TRADEOFFS.md) (reasoning table).
-- Multi-agent critique loops vs Reflexion-the-name:
-  [ch. 4](../4-multi-agent-systems/).
-- Memory that **outlives** a job:
-  [ch. 6](../6-memory-and-rag/).
-- Scoring chains, grounding, critics as eval:
-  [ch. 7](../7-evaluation-and-feedback/).
 
 ## Check yourself
 
@@ -737,20 +663,17 @@ Same layer, different sockets — do not merge the chapters.
    says the memo was rude. What invariant did you break,
    and how would you reshape attempts so critique cannot
    create a side effect?
-8. Using the TRADEOFFS reasoning table, pick a pattern for
+8. Using the pattern table in this chapter, pick a pattern for
    (a) a SKU lookup, (b) a logic puzzle with no APIs, (c)
    a plan with three mutually exclusive vendors you can
    score. Name what you **pay** in each.
 9. Sequential-thinking MCP: the Inspector shows the tool;
    the agent never writes thoughts; across two `Runner`
    processes the "plan" is empty anyway. Separate a
-   **persona** miss from a **transport/lifetime** miss
-   ([ch. 3](../3-mcp/)). What experiment distinguishes
-   them?
+   **persona** miss from a **transport/lifetime** miss.
+   What experiment distinguishes them?
 10. You want CoT to draft a plan, ReAct to execute, and
     Reflexion to patch. Why is that three contracts (or
     three agents) rather than one adjective-rich persona,
     and where does ST help vs a typed `Plan` passed in
     code?
-
-Continue to [Memory and knowledge RAG](../6-memory-and-rag/).

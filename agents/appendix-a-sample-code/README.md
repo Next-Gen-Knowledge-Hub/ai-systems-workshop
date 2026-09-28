@@ -9,15 +9,13 @@ put a key in a file that never gets committed, run a chapter sample, and
 keep the bench from rotting. Skip it and every later "just run listing
 3.x" becomes a weekend of interpreter archaeology.
 
-This is not MCP theory ([ch. 3](../3-mcp/)) and not Node
-([appendix B](../appendix-b-nodejs-mcp/)). It is **Python plus secrets
-plus how you launch files**. Many MCP samples still need Node; finish B
-before those.
+This is Python plus secrets plus how you launch files. Many MCP samples
+still need Node; finish Appendix B before those listings.
 
 Official samples:
 [cxbxmxcx/AI-Agent-Workflows](https://github.com/cxbxmxcx/AI-Agent-Workflows).
 
-## The mental model
+## What you are setting up
 
 ```
   git clone  -->  venv (3.11+)  -->  deps (F5 or pip)
@@ -29,7 +27,7 @@ Official samples:
               python chapter_XX/some_sample.py
                          |
                          +-- traces in the vendor dashboard
-                         +-- MCP samples also need Node/npx (app B)
+                         +-- MCP samples also need Node/npx
 ```
 
 The one sentence: **one venv, one `.env`, one interpreter in the editor**
@@ -79,8 +77,9 @@ Your prompt should show the venv. `which python` (or `where python` on
 Windows) should point **inside** `venv`, not at `/usr/bin/python3`.
 
 If you already live in conda or pyenv, you can skip `venv` — then you
-**must** point the editor at *that* interpreter. The failure mode is
-identical: F5 or `pip` talking to a different Python than the terminal.
+**must** point the editor at *that* interpreter. The failure is
+identical either way: F5 or `pip` talking to a different Python than the
+terminal.
 
 ## Dependencies: debugger path vs pip path
 
@@ -135,23 +134,26 @@ python chapter_02/01_first_agent.py
 
 (Use the real filename from the tree; names move between printings.)
 You should see terminal output from `Runner` and, if tracing is on, a
-run in the OpenAI dashboard ([ch. 2](../2-llms-prompting-agents/)).
+run in the OpenAI dashboard.
 
 MCP listings will spawn `npx` or a Node server. If those fail with
-`npx: not found`, you are not done — go to
-[appendix B](../appendix-b-nodejs-mcp/). That is expected, not a pip bug.
+`npx: not found`, finish the Node setup in Appendix B. That is expected,
+not a pip bug.
 
-Do not start on chapter 10's cognitive sample until chapters 2–3 run
-clean. The workshop order exists so the bench is proven.
+Do not start on the cognitive-agent sample until earlier chapter
+listings (prompts, tools, MCP) run clean. The workshop order exists so
+the bench is proven.
 
 ## Troubleshooting
+
+When something fails, look at the symptom first, then the usual cause.
 
 | Symptom | Look at first |
 |---|---|
 | `python` is 3.9 or missing | Install 3.11+; recreate venv |
 | `No module named agents` | Interpreter ≠ venv; reinstall reqs |
 | `OPENAI_API_KEY` / 401 | `.env` location, debugger env, key revoked |
-| Hang on first MCP sample | Node/npx ([appendix B](../appendix-b-nodejs-mcp/)) |
+| Hang on first MCP sample | Node/npx (Appendix B) |
 | F5 does nothing useful | Open the **repo** folder, not a parent; pick interpreter |
 | Weird Unicode / SSL on corp net | Proxy, cert bundle; not "the book is wrong" |
 
@@ -166,23 +168,18 @@ still 429.
   package name.
 - Rotate keys if they leaked; treat `.env` like a password file
   (`chmod` on Unix).
-- Keep Node LTS in spec for MCP (appendix B) on the **same machine** as
-  this venv — STDIO servers are local processes.
+- Keep Node LTS in spec for MCP on the **same machine** as this venv —
+  STDIO servers are local processes.
 - When the book and the repo disagree, **the repo you just pulled** is
   the runtime truth; these notes are the map.
 
-## Check yourself
+## You are done when
 
-1. Why clone `AI-Agent-Workflows` instead of pasting listings into this
-   workshop repo? What breaks if `.env` lives in the wrong tree?
-2. You ran `pip install -r requirements.txt` and still get
-   `ModuleNotFoundError`. Name two interpreter mistakes that cause that.
-3. F5 vs pip: when would you pick each, and what mess appears if you
-   silently use both for months?
-4. A teammate commits `.env` "just this once." What do you rotate, and
-   what do you add so git stops accepting it?
-5. An MCP sample fails immediately after a Python agent sample succeeded.
-   Which appendix do you open, and why is that not a `requirements.txt`
-   issue?
-
-Continue to [Node.js for local MCP](../appendix-b-nodejs-mcp/).
+- [ ] `AI-Agent-Workflows` is cloned and you work from its root
+- [ ] A 3.11+ venv is active; `which python` points inside it
+- [ ] Dependencies installed via **either** F5 **or** `pip` (one path)
+- [ ] Editor interpreter matches that venv
+- [ ] `.env` holds `OPENAI_API_KEY` at the repo root and is not committed
+- [ ] `python chapter_02/01_first_agent.py` (or the current first listing)
+  prints Runner output
+- [ ] You know where to go when `npx: not found` appears (Appendix B)

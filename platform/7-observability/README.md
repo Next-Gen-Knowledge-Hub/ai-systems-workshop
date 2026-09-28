@@ -12,12 +12,11 @@ scores, dollars, experiments — you get six log streams and a finance
 ticket. Skip this chapter and every prompt change is a hope, every
 invoice is a mystery, and "quality" lives in Slack anecdotes.
 
-The Agents track is a different book. Test-driven agent development,
-critics, grounding agents, and Phoenix as a lab notebook live in
-[agents ch. 7](../../agents/7-evaluation-and-feedback/). Mention that
-folder. Do not rewrite TDAD or Phoenix here. This folder stays on the
-**Observability Service** and the **Experimentation Service**: the
-fleet-wide data model, contracts, and improvement loop.
+The folder stays on the **Observability Service** and the
+**Experimentation Service**: the fleet-wide data model, contracts, and
+improvement loop. Agent-local eval loops, critics, and lab notebooks
+belong elsewhere; here the platform stores scores and joins them to
+cost.
 
 ## The mental model
 
@@ -49,13 +48,10 @@ The one sentence to remember: **quality and cost must share a
 trace_id**, or you will optimize the dashboard that is easiest to
 graph.
 
-Chapter 1's "visible quality and cost" bullet is this pair of
-services. Sprawl here looks like four log formats, token counts that
-never leave the Model Service, and a prompt "v7" that nobody can A/B.
-
-Offline vs online eval, human queues, and A/B hygiene sit in
-[`TRADEOFFS.md`](../../TRADEOFFS.md) (Evaluation table). Use this
-folder for the **services** that implement those rows.
+Sprawl here looks like four log formats, token counts that never leave
+the Model Service, and a prompt "v7" that nobody can A/B. Offline vs
+online eval, human queues, and A/B hygiene are product choices; this
+chapter is the **services** that implement them.
 
 ## Why AI systems need specialized observability
 
@@ -135,9 +131,8 @@ microservice."
 Classical app cost tracks CPU and RAM. It is dull and similar across
 requests. GenAI cost tracks **tokens**, which swing with history
 length, retrieved context, model choice, retries, and cache hits.
-[Chapter 3](../3-model-service/) already records per-request dollars.
-That is how you investigate the one call that cost fifty cents
-instead of two.
+The Model Service already records per-request dollars. That is how
+you investigate the one call that cost fifty cents instead of two.
 
 Finance and engineering also need the layer *above* the request:
 spend by **team**, by **workflow**, by **model**, trends, and
@@ -152,8 +147,8 @@ affordable. The bridge to experimentation is exactly that join: a
 trace that carries dollars *and* quality, so a prompt change can be
 judged on both.
 
-Chapter 1's mystery invoice is this chapter's drill-down: total →
-team → workflow → model → the generation that actually happened.
+The mystery invoice becomes a drill-down: total → team → workflow →
+model → the generation that actually happened.
 
 ## The observability data model
 
@@ -175,9 +170,9 @@ hit, provider, finish reason. Index generations as first-class
 objects so "show me GPT-4o calls over $0.10" is not a JSON grep.
 
 **Which conversation was this turn part of?** A **session** groups
-traces the way [chapter 4](../4-session-service/) groups messages.
-Session-level views answer "this user had a bad afternoon," which a
-single trace cannot.
+traces the way the Session Service groups messages. Session-level
+views answer "this user had a bad afternoon," which a single trace
+cannot.
 
 **Was the result any good?** A **score** attaches a named metric
 (helpfulness, completeness, retrieval relevance, safety) to a
@@ -358,10 +353,10 @@ Dimensions you will actually slice: `provider`, `model`,
 id as a label will melt Prometheus. High-cardinality truth belongs
 on traces.
 
-Each service already *has* domain structs ([chapter 3](../3-model-service/)
-`RequestMetrics`, [chapter 6](../6-tools-and-guardrails/) evaluation
-records). Observability does not reinvent them. It **publishes**
-them into the standard names.
+Each service already *has* domain structs (`RequestMetrics` from the
+Model Service, evaluation records from Tools and Guardrails).
+Observability does not reinvent them. It **publishes** them into
+the standard names.
 
 ### Distributed tracing and the debug workflow
 
@@ -393,10 +388,9 @@ SDK) and the tree splits. Treat "unparented spans" as a bug.
 
 ## How platform services report telemetry
 
-[Chapter 2](../2-sdk-and-api/) promised observability **by
-default**. A workflow author calls `platform.models.chat` and
-`platform.data.search` and does not wrap spans. If they must, the
-platform failed the DX test.
+The platform promised observability **by default**. A workflow
+author calls `platform.models.chat` and `platform.data.search` and
+does not wrap spans. If they must, the platform failed the DX test.
 
 Three layers deliver the promise. A fourth exists for logic the
 platform cannot see.
@@ -426,7 +420,7 @@ request rate, latency histograms, error ratio, cost rate, cache
 hit ratio, guardrail block rate, retrieval k distribution.
 
 That is a thin publisher: take the dataclass you already built in
-the domain chapter, call `record_counter` / `record_histogram` with
+the domain, call `record_counter` / `record_histogram` with
 `PlatformMetrics` names and the standard labels. Do not make Model
 Service know about Grafana. Do not make Observability know about
 OpenAI usage objects.
@@ -465,9 +459,9 @@ the services use. Pass the current `trace_context`, a name
 (`custom_rerank`), and a few attributes (`num_candidates`). Do not
 invent a second tracing library.
 
-If the custom step is actually a tool, register it in
-[chapter 6](../6-tools-and-guardrails/) and you get Execute spans
-for free. Custom spans are for glue that is not a capability.
+If the custom step is actually a tool, register it with the Tools
+service and you get Execute spans for free. Custom spans are for
+glue that is not a capability.
 
 ## Quality scores and cost attribution
 
@@ -477,7 +471,7 @@ be wrong. Scores are how quality becomes a column next to latency.
 
 ### Scores: measuring response quality
 
-Three sources, three cost/quality curves (see TRADEOFFS):
+Three sources, three cost/quality curves:
 
 **Automated / heuristic.** Code. Milliseconds. Deterministic.
 Structural checks: required JSON, length bounds, "did the string
@@ -488,9 +482,9 @@ still correct.
 **LLM-as-judge.** A model scores another model's output against a
 criterion. Flexible: helpfulness, tone, flow. Expensive, noisy,
 biased (especially same-family judges). Sample. Treat as
-instrumentation with error bars, not a court. The Agents folder
-goes deeper on rubrics and critic agents; here the platform just
-**stores the score** and which judge produced it.
+instrumentation with error bars, not a court. The platform
+**stores the score** and which judge produced it; writing the
+rubric is separate work.
 
 **Human.** Ground truth. Slow. Pricey. Use on a sample, on
 disagreements, on traces that already look bad. Calibration fuel
@@ -521,8 +515,8 @@ before the quarter ends, not when procurement forwards the PDF.
 A quality win that doubles tokens may still be a product loss. Put
 `$ / successful task` on the same report as helpfulness, or you
 will "improve" the assistant into insolvency. Routing and cache
-from [chapter 3](../3-model-service/) are the usual levers once the
-report names the model.
+in the Model Service are the usual levers once the report names
+the model.
 
 ## The Experimentation Service
 
@@ -550,7 +544,7 @@ Insight to keep: the two services are halves of one cycle.
 ```
 
 Change **one** class of thing at a time or the loop cannot
-attribute. TRADEOFFS method, item 4.
+attribute.
 
 ### Service contract
 
@@ -567,7 +561,7 @@ A teaching gRPC surface groups ~twenty RPCs into the lifecycle:
 - **Annotation queues** — create, route, record labels.
 
 SDK: `platform.experiments`, same lazy client pattern as the rest
-of [chapter 2](../2-sdk-and-api/).
+of the platform SDK.
 
 ### Target lifecycle and evaluation
 
@@ -714,26 +708,24 @@ The workflow author's code should look like ordinary
 `platform.sessions` / `models` / `data` / `guardrails` calls with
 `trace_context` passing through, optional `assign_experiment`, and
 an outcome record at the end. No span wallpaper. Listing-shaped
-intent, infrastructure underneath — the same DX bet as
-[chapter 2](../2-sdk-and-api/).
+intent, infrastructure underneath.
 
-Chapter 9 will hang a whole assistant on this. If traces are empty
-now, Claw will be a black box with better branding.
+If traces are empty when you hang a whole assistant on this stack,
+that assistant is a black box with better branding.
 
 ### What these services are not
 
 They are not the agent-local eval loop. Critics, grounding as a
-guardrail, Phoenix sessions, TDAD:
-[agents ch. 7](../../agents/7-evaluation-and-feedback/). The
-platform will happily store a critic's score if you
-`RecordScore`. It will not teach you how to write the critic.
+guardrail, Phoenix sessions, test-driven agent development: the
+platform will happily store a critic's score if you `RecordScore`.
+It will not teach you how to write the critic.
 
 They are not the Model Service. Token prices and usage originate
 there; this chapter **aggregates and joins**.
 
-They are not the Workflow Service. Jobs and health probes are
-[chapter 8](../8-workflow-service/). Observability *watches*
-workflows; it does not deploy them.
+They are not the Workflow Service. Observability *watches*
+workflows; it does not deploy them. Jobs and health probes live
+with workflow runtime management.
 
 They are not an excuse to log every prompt in a shared bucket
 without ACL. Generations are data with a user in them.
@@ -757,7 +749,7 @@ without ACL. Generations are data with a user in them.
    near-miss and say which object holds duration, which holds the
    per-rule confidence, which holds the week-over-week block rate,
    and which holds "was the final reply helpful."
-6. Why must ingest be fire-and-forget? Describe a failure mode if
+6. Why must ingest be fire-and-forget? Describe what goes wrong if
    `RecordGeneration` sits on the user path, and what the client
    buffer should do when Observability is down.
 7. TracedService vs a custom `trace_operation` in workflow code:
@@ -770,9 +762,6 @@ without ACL. Generations are data with a user in them.
    problems that could cause that gap, and what A/B assignment
    rule you would insist on before calling the online number
    causal.
-10. In one sentence, what would you still have to learn from
-    [agents ch. 7](../../agents/7-evaluation-and-feedback/) after
-    this folder — and what must you *not* copy from Phoenix into
-    the Observability Service?
-
-Continue to [the Workflow Service](../8-workflow-service/).
+10. In one sentence each: what does Observability store that
+    Experimentation does not, and what does Experimentation manage
+    that Observability does not?

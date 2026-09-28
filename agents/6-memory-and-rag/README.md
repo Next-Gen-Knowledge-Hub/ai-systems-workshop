@@ -3,21 +3,6 @@
 Companion notes for **Chapter 6** of *AI Agents in Action* (2nd edition,
 Micheal Lanham; Manning, 2026).
 
-Layers 1–3 can plan and call tools. They still freeze at anything the
-weights never saw: last week's policy, the PDF you dropped in Slack, the
-allergy the user mentioned three sessions ago. This chapter is **layer 4**
-from [ch. 1](../1-rise-of-ai-agents/) — how an *agent* annotates the next
-prompt with the right tokens. Skip it and you will paste the whole wiki
-into the system prompt, blow the window, and call the resulting mess
-"memory."
-
-The Platform track is a different book. Session transcripts, token-budget
-algorithms, and "what fits in this call" as a *service* live in
-[platform ch. 4](../../platform/4-session-service/). Org-wide indexes,
-ingestion pipelines, and Reciprocal Rank Fusion as a *shared retrieval
-service* live in [platform ch. 5](../../platform/5-data-service/). This
-folder stays on **how one agent retrieves knowledge and remembers**.
-
 ## The mental model
 
 Two facts fight each other. External stores can grow without bound. A
@@ -62,29 +47,28 @@ user preference.
 
 ## Retrieval in AI applications
 
-**Problem** — The model is asked about a private or recent fact and
-confidently invents one.
-
-**Solution** — Keep the fact *outside* the weights. At call time, fetch
-a small relevant set and put it in the prompt (or in a tool result the
-prompt can see).
+The model is asked about a private or recent fact and confidently
+invents one when that fact lives only in the weights' imagination.
+Keep the fact *outside* the weights. At call time, fetch a small
+relevant set and put it in the prompt (or in a tool result the prompt
+can see).
 
 Retrieval is not a vendor feature. It is the mechanism that turns
 "arbitrarily large external state" into "tokens this call can use."
 Unstructured stores hold prose: tickets, transcripts, notes,
 preferences written as sentences. Structured stores hold rows and
 files you would query with SQL, a filesystem, or an API. Agents use
-both. The structured path is often a **tool** ([ch. 2](../2-llms-prompting-agents/),
-[ch. 3](../3-mcp/)). The unstructured path is often **embed and
-search**. Production systems use both on the same question.
+both. The structured path is often a **tool**. The unstructured path
+is often **embed and search**. Production systems use both on the same
+question.
 
 What is *not* retrieval: stuffing the last 200 turns into the window
 and hoping. That is a context policy. It works until it does not, and
 it does not scale to "everything this user ever said" or "the whole
-handbook." How a *platform* truncates, summarizes, and budgets tokens
-is [platform ch. 4](../../platform/4-session-service/) — mention only.
-Here, the agent-shaped question is: **which tool do I call, with which
-query, and what do I do with an empty hit list?**
+handbook." How a platform truncates, summarizes, and budgets tokens for
+the live transcript is a separate service concern. Here, the
+agent-shaped question is: **which tool do I call, with which query, and
+what do I do with an empty hit list?**
 
 ### What can live outside the model
 
@@ -137,13 +121,11 @@ vector so similar meanings sit near each other. The **generator**
 interchangeable. Changing the embedder without re-indexing is how you
 search in a space the documents are not in.
 
-**Problem** — A demo indexes one PDF, asks a question that appears
-verbatim in chunk 4, and declares RAG "done."
-
-**Solution** — Draw both phases. Name the chunker, the embedder, the
-store, the `k`, the prompt rule for "no hits," and the grounding
-rule for "hits exist but the claim is not in them." Grounding is
-[ch. 7](../7-evaluation-and-feedback/). Without it, retrieval is a
+A demo that indexes one PDF, asks a question that appears verbatim in
+chunk 4, and declares RAG "done" has only exercised half the machine.
+Draw both phases. Name the chunker, the embedder, the store, the `k`,
+the prompt rule for "no hits," and the grounding rule for "hits exist
+but the claim is not in them." Without grounding, retrieval is a
 suggestion the model is free to ignore.
 
 ### Ingestion is a product decision
@@ -161,21 +143,19 @@ smallest unit that still answers a question:
   so every query searches the whole world.
 
 Overlap, heading-aware splits, and metadata (`source`, `as_of`,
-`acl`) are the unglamorous half of RAG. The Platform track turns this
-into an ingestion service ([platform ch. 5](../../platform/5-data-service/)).
-An agent still inherits whatever you ingested. Garbage chunks in,
-confident nonsense out.
+`acl`) are the unglamorous half of RAG. An org-wide ingestion pipeline
+turns this into a shared service; an agent still inherits whatever you
+ingested. Garbage chunks in, confident nonsense out.
 
 ### Retrieval is a tool, not only a preprocessor
 
 Classic RAG is a pipeline: query → retrieve → generate, once. An
-**agent** can call search as a tool, read the observation, **reformulate
-the query**, search again, or switch from vector to keyword. That is
-the difference between a chatbot with a vector appendix and a RAG
-*agent*. It is also how you get runaway retrieval loops. Budget the
-tool ([ch. 9](../9-agentic-loop/) for loop shape; [ch. 8](../8-deploying-agents/)
-for cost). For this chapter, remember: **search/relevance first**,
-then wrap it in an agent, then add a second search style.
+**agent** can call search as a tool, read the observation,
+**reformulate the query**, search again, or switch from vector to
+keyword. That is the difference between a chatbot with a vector
+appendix and a RAG *agent*. It is also how you get runaway retrieval
+loops. Budget the tool. For this chapter, remember: **search/relevance
+first**, then wrap it in an agent, then add a second search style.
 
 ## Semantic search and document indexing
 
@@ -206,12 +186,10 @@ ways.
    "overcapacity alarm (SPK-441)." Pure semantics sometimes bridges
    that. Exact codes often do not. Plan for both.
 
-**Problem** — Stakeholders hear "semantic" and disable keyword search
-as "old."
-
-**Solution** — Keep a lexical path for identifiers, error codes, names,
-and jargon that embeddings smear. Hybrid search is not nostalgia. It
-is how you stop missing `SPK-441`.
+Stakeholders hear "semantic" and disable keyword search as "old."
+Keep a lexical path for identifiers, error codes, names, and jargon
+that embeddings smear. Hybrid search is how you stop missing
+`SPK-441`.
 
 ### Indexing as a contract
 
@@ -225,11 +203,10 @@ Write the contract down before you pick a store:
 - Who is allowed to hit this index?
 
 If two teams share an index without that contract, you do not have
-knowledge. You have a pile. Isolated indexes per tenant or corpus
-are a platform concern
-([platform ch. 5](../../platform/5-data-service/)); the agent must
-still pass the right collection name or tool. Searching the wrong
-index is a silent security bug.
+knowledge. You have a pile. Isolated indexes per tenant or corpus are
+an infrastructure concern; the agent must still pass the right
+collection name or tool. Searching the wrong index is a silent
+security bug.
 
 ## Vector similarity
 
@@ -259,11 +236,10 @@ The reverse failure is just as real:
   dense:           maybe miss, maybe bury under "alarm" essays
 ```
 
-**Problem** — Treating TF-IDF as a broken embedding model.
-
-**Solution** — Treat it as a **precision instrument for tokens**. It
-is fast, inspectable, and often wins on SKUs, names, and codes.
-Semantic embeddings win on paraphrase. Hybrid systems run both.
+Treating TF-IDF as a broken embedding model misses the point. Treat it
+as a **precision instrument for tokens**. It is fast, inspectable, and
+often wins on SKUs, names, and codes. Semantic embeddings win on
+paraphrase. Hybrid systems run both.
 
 ### Dense embeddings
 
@@ -318,12 +294,11 @@ After you have vectors, you need somewhere to put them that can
 answer "nearest to this query vector" quickly, with metadata filters,
 and without re-embedding the corpus on every process start.
 
-**Problem** — "We need Pinecone" as the first architecture sentence.
-
-**Solution** — Name the **interface**: add embeddings, query by
-vector (and optionally by text, if the store embeds for you), filter
-on metadata, persist. Then pick an implementation that matches
-deployment, not a blog post.
+"We need Pinecone" as the first architecture sentence skips the real
+work. Name the **interface**: add embeddings, query by vector (and
+optionally by text, if the store embeds for you), filter on metadata,
+persist. Then pick an implementation that matches deployment, not a
+blog post.
 
 ### Chroma as an example, not a religion
 
@@ -337,8 +312,7 @@ Other shapes you will meet (so you do not think the API *is* RAG):
 - **Embedded / local** — Chroma, LanceDB, a SQLite extension. Great
   for a single agent process.
 - **Postgres with a vector type** — one database you already run;
-  the Platform track's example direction is pgvector in
-  [platform ch. 5](../../platform/5-data-service/).
+  pgvector is a common direction.
 - **Dedicated services** — Qdrant, Weaviate, Pinecone, etc. Ops,
   SLAs, and hybrid features vary.
 
@@ -387,10 +361,9 @@ way to merge lists.
 
 ### Everything begins with search and relevance
 
-**Problem** — Feed the generator twelve "semantically close" chunks
-and hope it sorts truth from rhyme.
-
-**Solution** — Catalog the failure modes *before* you write the
+Feeding the generator twelve "semantically close" chunks and hoping it
+sorts truth from rhyme is a retrieval policy failure dressed as a
+prompt problem. Catalog the failure modes *before* you write the
 agent. Each row wants a retrieval move, not a longer system prompt.
 
 | Failure | What it looks like | Move |
@@ -431,8 +404,7 @@ That is already an agent: sense (user question), plan (form a
 search query), act (tool), learn (read hits, maybe search again).
 The anti-pattern is stuffing "always call search" into a 2,000-word
 prompt. Prefer a **clear tool name and docstring**; let the model
-choose, then measure whether it does
-([ch. 7](../7-evaluation-and-feedback/)).
+choose, then measure whether it does.
 
 Grounding belongs in the instructions as a *constraint* ("only
 claims supported by hits") and later as a *separate checker*. Do
@@ -483,18 +455,13 @@ Two ways to give this to an agent:
   chooses, or calls both and synthesizes. More agency, more ways to
   skip the useful one, more traces to inspect.
 
-The Platform track implements hybrid + RRF as part of a Data
-Service ([platform ch. 5](../../platform/5-data-service/)). Do not
-paste that service into this agent. If a platform search endpoint
-already fuses, the agent's tool should call *that* rather than
-reimplement RRF in the persona.
+If a shared search endpoint already fuses, the agent's tool should
+call *that* rather than reimplement RRF in the persona.
 
-**Problem** — Fusion constants cargo-culted from a blog, never
-measured.
-
-**Solution** — Hold out questions that *need* exact tokens and
-questions that *need* paraphrase. Plot hit rate at rank 5 for
-vector-only, keyword-only, and fused. Change one knob.
+Fusion constants cargo-culted from a blog and never measured will
+quietly miss one class of questions. Hold out questions that *need*
+exact tokens and questions that *need* paraphrase. Plot hit rate at
+rank 5 for vector-only, keyword-only, and fused. Change one knob.
 
 Agent-directed chaining is a third hybrid: first keyword, if empty
 then vector, or the reverse. That is a policy you can test. It is
@@ -503,11 +470,11 @@ not automatically better than RRF. It is more interpretable.
 ## Memory with MCP
 
 RAG-for-documents and RAG-for-memory share retrieval. They do not
-share **writes**, **identity**, or **forgetting**. MCP
-([ch. 3](../3-mcp/)) is how you attach stores as tools without
-baking Chroma or a graph client into every agent binary. Community
-servers exist for graphs, vectors, and files. Use them as *sockets*,
-not as an excuse to skip the memory policy.
+share **writes**, **identity**, or **forgetting**. MCP is how you
+attach stores as tools without baking Chroma or a graph client into
+every agent binary. Community servers exist for graphs, vectors, and
+files. Use them as *sockets*, not as an excuse to skip the memory
+policy.
 
 ### Memory form versus agent function
 
@@ -525,13 +492,11 @@ them and name the parts you actually run:
 | Write policy | What gets stored, under which id, with whose consent |
 | Forgetting | TTL, summarization, deletion, contradiction |
 
-**Problem** — "Add memory" becomes a second vector index of raw
-chat, queried the same way as the employee handbook.
-
-**Solution** — Split **knowledge writes** (ingest a doc) from
-**memory writes** (record that this user is vegetarian, or that
-last Tuesday's refund needed a manager). Different schemas,
-different tools, different retention.
+"Add memory" often becomes a second vector index of raw chat, queried
+the same way as the employee handbook. Split **knowledge writes**
+(ingest a doc) from **memory writes** (record that this user is
+vegetarian, or that last Tuesday's refund needed a manager). Different
+schemas, different tools, different retention.
 
 What agents need is mundane: persist across sessions, retrieve
 what is relevant, splice it into the prompt, and not retrieve
@@ -562,19 +527,16 @@ subgraph, then generate. For *memory*, the same shape records
 people, constraints, and events from conversation.
 
 MCP is a practical way to attach such a store: tools like
-"search nodes," "add observation," "find related." The sequential-
-thinking server from [ch. 5](../5-reasoning-and-planning/) was a
-scratchpad for *plans*. A graph server is a scratchpad for
-*world state that should still be true tomorrow*. Do not use one
-server for both jobs without naming the difference.
+"search nodes," "add observation," "find related." A sequential-
+thinking scratchpad stores *plans for the current job*. A graph
+server stores *world state that should still be true tomorrow*. Do
+not use one server for both jobs without naming the difference.
 
-**Problem** — Extracting a graph with an LLM on every message and
-never merging duplicate nodes ("Maya", "maya@lab", "Dr. Chen").
-
-**Solution** — Identity rules. Stable ids. Observations attached
-to nodes, not new nodes per synonym. Periodic cleanup. Graphs
-rot faster than vector piles because bad edges look like
-knowledge.
+Extracting a graph with an LLM on every message and never merging
+duplicate nodes ("Maya", "maya@lab", "Dr. Chen") is how graphs rot.
+Identity rules. Stable ids. Observations attached to nodes, not new
+nodes per synonym. Periodic cleanup. Graphs rot faster than vector
+piles because bad edges look like knowledge.
 
 When a graph helps:
 
@@ -621,12 +583,10 @@ does not grow a new client library per store. You still own the
 writes happen (every turn is usually wrong), and how conflicts
 resolve (user says "I eat fish now").
 
-**Problem** — Mandatory theatrical prefix ("Remembering...") as a
-substitute for a real workflow.
-
-**Solution** — If you need a ritual, make it a tool call you can
-see in a trace, not a string the model can skip. [Ch. 7](../7-evaluation-and-feedback/)
-will score whether the search happened.
+A mandatory theatrical prefix ("Remembering...") as a substitute for
+a real workflow can be skipped by the model. If you need a ritual,
+make it a tool call you can see in a trace, not a string the model
+can skip. Later evaluation can score whether the search happened.
 
 ### Semantic, episodic, and procedural
 
@@ -703,47 +663,16 @@ Forgetting is a policy, not a crash:
 - **Never-store** — secrets, raw card numbers, other people's
   data that landed in a paste.
 
-**Problem** — Summaries become false memories ("user is vegetarian"
-when they said "vegetarian this trip").
-
-**Solution** — Keep the source episode id. Prefer replace-with-
+Summaries become false memories ("user is vegetarian" when they
+said "vegetarian this trip") when the compact record loses
+provenance. Keep the source episode id. Prefer replace-with-
 structured-field over lossy prose when the field is operational.
 Summaries are for *search and context*, not for *authorization*.
 
-[Platform ch. 4](../../platform/4-session-service/) will talk
-about truncation and hierarchical session summaries as a token-
-budget algorithm. That is the conversation buffer. This chapter's
-forgetting is the **long-term store** growing mold. Different
-jobs. Do not merge the notes.
-
-## Where this chapter stops
-
-You now have the agent-shaped map:
-
-- retrieval as the bridge across the window,
-- RAG as ingest + retrieve + generate,
-- lexical vs dense vs hybrid,
-- a vector RAG agent, then a hybrid one,
-- memory as writes/reads over window, vectors, graphs, tables,
-- MCP as the way to attach those stores,
-- compression and forgetting as hygiene.
-
-What you do **not** have yet: proof the agent used the chunk it
-was given. That is evaluation and grounding — next chapter.
-
-What this folder will not become: a Data Service or a Session
-Service. When you need org indexes, RRF as infrastructure, or
-token-budget algorithms for the live transcript, leave this
-directory:
-
-- [platform ch. 4 — Session Service](../../platform/4-session-service/)
-  (session contents, truncation, summarization, token budget)
-- [platform ch. 5 — Data Service](../../platform/5-data-service/)
-  (ingestion, isolated indexes, hybrid search, RRF)
-
-Continue to build the *agent* here until those services exist.
-Borrowing their vocabulary without their contracts is how every
-team ships a third Chroma folder named `tmp_index_final2`.
+Truncation and hierarchical session summaries for the live
+conversation buffer are a token-budget algorithm for the window.
+This chapter's forgetting is the **long-term store** growing mold.
+Different jobs.
 
 ## Check yourself
 
@@ -778,5 +707,3 @@ team ships a third Chroma folder named `tmp_index_final2`.
     about *this month's* strike. What forgetting or provenance
     rule would have stopped that compact memory from living
     forever?
-
-Continue to [Evaluation and feedback](../7-evaluation-and-feedback/).

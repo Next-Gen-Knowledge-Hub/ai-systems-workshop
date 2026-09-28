@@ -8,8 +8,8 @@ session, data, tools, guardrails, observability, workflows) that stop every
 team from reinventing the same 98% of the stack.
 
 We are guiding this workshop with three books. They are kept on **separate
-tracks**. Where a topic appears in more than one, the notes do not merge the
-chapters — they **mention** the other track and send you there.
+tracks**. Each chapter note teaches only that chapter. It does not point
+at the others.
 
 | Track | Folder | Book |
 |---|---|---|
@@ -38,9 +38,9 @@ You can write Python. For Agents and Platform you have called an LLM API
 once. For ML you are willing to run notebooks against a table of numbers.
 You do not need prior agent-framework experience, MCP, RAG internals,
 platform design, or a stats degree — that is what the folders are for.
-Where a chapter needs a concept from an earlier one, it says so. Where
-*another book* covers the same idea from a different angle, you get a
-one-line **See also** and a link, not a rewrite.
+Where a chapter needs a concept, it teaches that concept in the note
+itself. The topic index and the trade-offs sheet are separate maps if
+you want to look a word up later.
 
 ## How the three books divide the work
 
@@ -68,9 +68,9 @@ Read the ML track first if you have never fit a model and words like
 "gradient, overfit, precision" are still fog. Read the Agents track first
 if you have never built an agent. Read the Platform track first if you
 already ship LLM features and keep hitting cost, memory, and sprawl. Any
-order works; the index is the map. Do not merge a Géron chapter into an
-Agents or Platform folder because they share a word ("embedding", "agent",
-"deploy", "evaluate").
+order works; the index is the map. A shared word ("embedding", "agent",
+"deploy", "evaluate") still means a different job in each book, and each
+folder keeps its own chapter.
 
 ## This repository contains the following topics
 
@@ -85,40 +85,33 @@ Agents or Platform folder because they share a word ("embedding", "agent",
 2. [LLMs, prompting, and agents](./agents/2-llms-prompting-agents/) — AIA ch. 2
     - Tokens, temperature, top-p; persona as the system prompt
     - A minimal OpenAI Agents SDK agent; tools and tracing
-    - **See also:** [ML attention / transformers (you train them)](./ml/16-nlp-attention/)
 3. [Actions with MCP](./agents/3-mcp/) — AIA ch. 3
     - Clients, servers, tools/resources/prompts; STDIO vs SSE
     - Using and building MCP servers for agents
-    - **See also:** [platform tools & MCP](./platform/6-tools-and-guardrails/)
 
 **Part A2 — Multi-agent, reasoning, memory**
 
 4. [Multi-agent systems](./agents/4-multi-agent-systems/) — AIA ch. 4
     - Control patterns, shared memory vs messages vs MCP
     - Flows, handoffs, input/output guardrails
-    - **See also:** [platform workflows](./platform/8-workflow-service/)
 5. [Reasoning and planning](./agents/5-reasoning-and-planning/) — AIA ch. 5
     - Chain-of-thought, ReAct, tree-of-thought, Reflexion
     - Sequential thinking as an MCP server
 6. [Memory and RAG](./agents/6-memory-and-rag/) — AIA ch. 6
     - Embeddings, vector search, hybrid RAG agents
     - Graph/hybrid memory over MCP; compression and forgetting
-    - **See also:** [session service](./platform/4-session-service/), [data service](./platform/5-data-service/), [ML embeddings as features](./ml/13-data-and-preprocessing/)
 
 **Part A3 — Hardening and shipping**
 
 7. [Evaluation and feedback](./agents/7-evaluation-and-feedback/) — AIA ch. 7
     - Test-driven agent development; grounding and critic agents
     - Phoenix traces, evaluators, annotations
-    - **See also:** [platform observability](./platform/7-observability/), [ML classification metrics](./ml/3-classification/)
 8. [Deploying agents](./agents/8-deploying-agents/) — AIA ch. 8
     - Voice, API, Docker Compose; edge vs API vs event-driven
     - Reliability, cost routing, threat model, prompt injection
-    - **See also:** [platform SDK/API](./platform/2-sdk-and-api/), [model service](./platform/3-model-service/), [ML serving weights](./ml/19-scale-and-deploy/)
 9. [The agentic loop](./agents/9-agentic-loop/) — AIA ch. 9
     - Inner SPAL loop, task loop, meta loop
     - Deep research agent; orchestration and collaboration loops
-    - **See also:** [ML reinforcement learning (you optimize a reward)](./ml/18-reinforcement-learning/)
 10. [Cognitive agents](./agents/10-cognitive-agents/) — AIA ch. 10
     - Cognition and metacognition as engineering, not metaphor
     - Workspace, attention, confidence gates, stagnation
@@ -138,34 +131,26 @@ Appendices: [sample code setup](./agents/appendix-a-sample-code/) (AIA A),
 2. [SDK and API design](./platform/2-sdk-and-api/) — DAS ch. 2
     - Developer experience contract; code-to-container
     - Sync / stream / async APIs; gateway and SDK
-    - **See also:** [deploying agents](./agents/8-deploying-agents/)
 
 **Part B2 — The core services**
 
 3. [The Model Service](./platform/3-model-service/) — DAS ch. 3
     - Provider adapters, streaming, retries, fallbacks, routing, cache
-    - **See also:** [LLMs and prompting](./agents/2-llms-prompting-agents/), [ML serving a trained graph](./ml/19-scale-and-deploy/)
 4. [The Session Service](./platform/4-session-service/) — DAS ch. 4
     - Conversation history, storage backends, token-budget strategies
-    - **See also:** [agent memory](./agents/6-memory-and-rag/)
 5. [The Data Service](./platform/5-data-service/) — DAS ch. 5
     - Indexes, ingestion, embeddings, hybrid search, RRF
-    - **See also:** [agent RAG](./agents/6-memory-and-rag/), [ML embeddings inside a network](./ml/13-data-and-preprocessing/)
 6. [Tools and guardrails](./platform/6-tools-and-guardrails/) — DAS ch. 6
     - Tool registry, credentials, MCP on the platform, execution policies
-    - **See also:** [agent MCP](./agents/3-mcp/), [agent guardrails](./agents/4-multi-agent-systems/)
 
 **Part B3 — Seeing, shipping, assembling**
 
 7. [Observability and experimentation](./platform/7-observability/) — DAS ch. 7
     - Traces, scores, cost; offline/online eval; A/B
-    - **See also:** [agent evaluation](./agents/7-evaluation-and-feedback/), [ML test set / CV](./ml/2-end-to-end-project/), [ML classification metrics](./ml/3-classification/)
 8. [The Workflow Service](./platform/8-workflow-service/) — DAS ch. 8
     - Decorated functions as HTTP; jobs, health, composition, deploy
-    - **See also:** [multi-agent flows](./agents/4-multi-agent-systems/), [agentic loop](./agents/9-agentic-loop/)
 9. [Building an AI assistant](./platform/9-building-an-assistant/) — DAS ch. 9
     - Putting every service into one assistant (memory, RAG, tools, safety)
-    - **See also:** [field tips](./agents/11-field-tips/)
 
 ### Track C — ML (*Hands-On Machine Learning*, 2e)
 
@@ -176,17 +161,14 @@ Appendices: [sample code setup](./agents/appendix-a-sample-code/) (AIA A),
     - Supervised / unsupervised / semisupervised / reinforcement
     - Batch vs online; instance-based vs model-based
     - Overfit, underfit, test/validation, data mismatch
-    - **See also:** [rise of agents](./agents/1-rise-of-ai-agents/) (agency is not SGD)
 2. [End-to-end ML project](./ml/2-end-to-end-project/) — HOML ch. 2
     - Frame the problem, pick a metric, hold out a test set
     - Explore, clean, pipelines, cross-validation, grid/random search
     - Launch, monitor, maintain a trained system
-    - **See also:** [platform observability](./platform/7-observability/), [project checklist](./ml/appendix-b-project-checklist/)
 3. [Classification](./ml/3-classification/) — HOML ch. 3
     - Binary classifiers; accuracy is a trap
     - Confusion matrix, precision, recall, PR curve, ROC/AUC
     - Multiclass, multilabel, multioutput
-    - **See also:** [agent evaluation](./agents/7-evaluation-and-feedback/), [platform scores](./platform/7-observability/)
 4. [Training models](./ml/4-training-models/) — HOML ch. 4
     - Linear regression, the normal equation, gradient descent (batch / SGD / mini-batch)
     - Polynomial features, learning curves, ridge / lasso / elastic net
@@ -215,22 +197,18 @@ Appendices: [sample code setup](./agents/appendix-a-sample-code/) (AIA A),
     - TF as a numpy-like runtime; custom losses, layers, training loops; Autograph
 13. [Data and preprocessing in TF](./ml/13-data-and-preprocessing/) — HOML ch. 13
     - `tf.data`, TFRecord, one-hot vs embeddings as *model features*
-    - **See also:** [agent RAG embeddings](./agents/6-memory-and-rag/), [data service](./platform/5-data-service/)
 14. [CNNs for vision](./ml/14-cnns/) — HOML ch. 14
     - Convolution, pooling; classic architectures; transfer; detection and segmentation
 15. [Sequences with RNNs and CNNs](./ml/15-sequences-rnns/) — HOML ch. 15
     - Recurrent cells; forecasting; LSTM/GRU; 1D conv for sequences
 16. [NLP with RNNs and attention](./ml/16-nlp-attention/) — HOML ch. 16
     - Char-RNN, sentiment, encoder–decoder, attention, the Transformer
-    - **See also:** [calling an LLM](./agents/2-llms-prompting-agents/) (you consume weights this chapter *trains*)
 17. [Autoencoders and GANs](./ml/17-autoencoders-gans/) — HOML ch. 17
     - Undercomplete and variational autoencoders; GAN training pathologies
 18. [Reinforcement learning](./ml/18-reinforcement-learning/) — HOML ch. 18
     - Rewards, MDPs, Q-learning, DQN; policy gradients
-    - **See also:** [agentic loop](./agents/9-agentic-loop/) (LLM loop ≠ reward optimizer)
 19. [Scale and deploy](./ml/19-scale-and-deploy/) — HOML ch. 19
     - TensorFlow Serving; GPUs; data vs model parallelism
-    - **See also:** [model service](./platform/3-model-service/) (adapter to a provider, not TF Serving), [deploying agents](./agents/8-deploying-agents/)
 
 Appendix: [ML project checklist](./ml/appendix-b-project-checklist/) (HOML B).
 Exercise solutions and the math appendices (C–G) stay in the book.
@@ -242,10 +220,7 @@ Cross-cutting: [topic index](./INDEX.md) · [trade-offs cheat sheet](./TRADEOFFS
 1. Read the book chapter. The book is the source of truth.
 2. Read the matching folder here. Headings follow the book's topics, so you
    can move between the two without losing your place.
-3. When a **See also** points at another track, follow it only if you need
-   that angle (how to *train* the model vs how to *code* the agent vs how
-   to *serve* it). Do not merge the chapters in your notes.
-4. Answer the **Check yourself** questions in your own words. A good answer
+3. Answer the **Check yourself** questions in your own words. A good answer
    has three parts: the takeaway, the failure mode it prevents, and one
    example from a system you have actually worked on.
 

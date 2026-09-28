@@ -3,22 +3,13 @@
 Companion notes for **Chapter 9** of *AI Agents in Action* (2nd edition,
 Micheal Lanham; Manning, 2026).
 
-Chapter 1 gave you **SPAL** — sense, plan, act, learn — as the inner
-beat of agency. Chapters 2–8 gave you personas, tools, MCP, multi-agent
-shapes, reasoning patterns, memory, eval, and a runtime that can host
-the result. None of that, by itself, is a *long-horizon* process. This
-chapter is **three nested loops**: the inner SPAL cycle, an external
-task loop that holds plan and state outside one model call, and a meta
-loop in which an *agent* (not a `for` loop) decides strategy. Skip it
-and you will either one-shot a research brief, or wrap `Runner.run()`
-in `while True` until the bill explains the mistake.
-
-The Platform track is a different book. How a graph becomes a
-container with jobs and health checks lives in
-[platform ch. 8](../../platform/8-workflow-service/). Control patterns,
-handoffs, and hub-versus-team *inside* a graph live in
-[ch. 4](../4-multi-agent-systems/). Mention those folders; do not merge
-them. This folder stays on **iteration as a designed control system**.
+A single agent call that senses, plans, acts, and learns can finish a short
+job. It cannot run a diligence brief across twenty searches, or drain a
+queue of invoices overnight, without losing the plan when the context
+window fills. This chapter treats iteration as a **designed control
+system**: three nested loops that share names people mix in design
+reviews. Skip it and you either one-shot a research brief, or wrap
+`Runner.run()` in `while True` until the bill explains the mistake.
 
 ## The mental model
 
@@ -47,11 +38,11 @@ The one sentence to remember a year from now: **the inner loop thinks;
 the task loop remembers the campaign; the meta loop changes the
 campaign.**
 
-Two consequences fall straight out of that diagram. First, "we added
-a while loop" is not layer 2. Layer 2 externalizes **goal, plan,
-state, and the stop decision** so they survive when the model's
-context window does not. Second, layer 3 is not "more agents in the
-YAML." It is an agent (or a team of peers) sitting on the decide
+Two consequences fall straight out of that diagram. First, wrapping a
+runner in a `while` is not layer 2 by itself. Layer 2 externalizes
+**goal, plan, state, and the stop decision** so they survive when the
+model's context window does not. Second, layer 3 is not "more agents in
+the YAML." It is an agent (or a team of peers) sitting on the decide
 knob. If Python still owns every branch, you are still on layer 2 —
 which is often what you wanted.
 
@@ -71,9 +62,8 @@ right unless you give them a file cabinet. The file cabinet is layer 2.
 
 ## Layer 1: the inner loop (sense–plan–act–learn)
 
-Layer 1 is the loop you already met in
-[ch. 1](../1-rise-of-ai-agents/). It is worth redrawing here so the
-outer layers have something precise to wrap.
+Layer 1 is the short-horizon engine. Redraw it here so the outer layers
+have something precise to wrap.
 
 ```
   goal (this call)
@@ -107,16 +97,14 @@ back into the thread, a scratch plan in the prompt. That state is
 process restarts. Fine for "look up the weather and summarize." Not
 fine for "research this company for two hours across twenty searches."
 
-Reasoning patterns from [ch. 5](../5-reasoning-and-planning/) (ReAct,
-CoT, Reflexion) live *on this layer*. They make a single cycle
-smarter. They do not, by themselves, persist a twelve-item plan
-overnight. If you find yourself pasting the whole plan into the system
-prompt every turn, you are paying layer-2 tax without getting layer-2
-structure.
+Reasoning patterns such as ReAct, chain-of-thought, and Reflexion live
+*on this layer*. They make a single cycle smarter. They do not, by
+themselves, persist a twelve-item plan overnight. If you find yourself
+pasting the whole plan into the system prompt every turn, you are
+paying layer-2 tax without getting layer-2 structure.
 
-Deployment from [ch. 8](../8-deploying-agents/) still applies: even
-layer 1 needs timeouts. An inner loop with no wall-clock budget is a
-runaway worker with extra poetry.
+Even layer 1 needs timeouts. An inner loop with no wall-clock budget is
+a runaway worker with extra poetry.
 
 ## Layer 2: the task loop
 
@@ -156,7 +144,8 @@ query, contradict itself, and declare victory. External state is how
 you make progress **visible** to code: `3/7 subtopics complete` is a
 number you can gate on. A vibe in the chat log is not.
 
-Two major shapes share this layer and must not be collapsed:
+Two major shapes share this layer. Collapsing them into one object
+hides which controller you are building.
 
 | Shape | State looks like | Plan looks like |
 |---|---|---|
@@ -170,9 +159,8 @@ Same controller pattern, different objects.
 
 Every frontier lab ships a "deep research" button. The word **deep**
 here is engineering, not marketing: more search, more reading, a
-longer horizon than one RAG hop from
-[ch. 6](../6-memory-and-rag/). The difference between a reliable
-researcher and a token incinerator is almost entirely:
+longer horizon than one retrieval hop. The difference between a
+reliable researcher and a token incinerator is almost entirely:
 
 1. how you **manage state** between iterations,
 2. how you **terminate**,
@@ -180,9 +168,8 @@ researcher and a token incinerator is almost entirely:
    actually look at the world.
 
 Get those right and the loop converges. Get them wrong and it
-circles. Eval from [ch. 7](../7-evaluation-and-feedback/) still
-scores the *report*; the loop controller scores *whether to stop
-writing it*.
+circles. Eval still scores the *report*; the loop controller scores
+*whether to stop writing it*.
 
 ```
   init plan + empty state
@@ -243,13 +230,12 @@ rename them; do not skip the fields):
   progress_summary                  errors[]
 ```
 
-**Problem** — Stuffing both objects wholesale into every prompt.
-
-**Solution** — `to_context()` is a *view*. As the campaign grows you
-truncate, summarize, or drop completed subtopics' raw notes. Layer 2
-exists so you can **control the window** on purpose. If iteration 12
-still contains iteration 1's raw HTML, you did not externalize state;
-you cloned the transcript into a Pydantic field.
+Stuffing both objects wholesale into every prompt is the usual trap.
+`to_context()` is a *view*. As the campaign grows you truncate,
+summarize, or drop completed subtopics' raw notes. Layer 2 exists so
+you can **control the window** on purpose. If iteration 12 still
+contains iteration 1's raw HTML, you did not externalize state; you
+cloned the transcript into a Pydantic field.
 
 On iteration zero, the plan may be empty. The agent's first job is
 then: **write the plan** (subtopics) before pretending to search. Put
@@ -260,10 +246,10 @@ search whatever the temperature likes.
 
 After the objects exist, attach tools. The book's lab uses an MCP
 search server over STDIO (Brave as the example; any search MCP is
-the same shape). Appendix B is why Node/`npx` shows up. You can also
-register native `@function_tool` search against a local corpus — the
-loop does not care *which* packaging, only that **observations are
-grounded in a tool result**.
+the same shape). Node and `npx` show up because those servers are
+often Node packages. You can also register native `@function_tool`
+search against a local corpus — the loop does not care *which*
+packaging, only that **observations are grounded in a tool result**.
 
 ```
   create_search_server()     # MCP STDIO, env has the vendor key
@@ -274,7 +260,7 @@ grounded in a tool result**.
 
 Multiple sources are normal: web search, an internal wiki MCP, a SQL
 tool. Do not hand a research agent a shell "so it can curl anything."
-That is a chapter 8 sandbox failure wearing a lab coat.
+That is a sandbox failure wearing a lab coat.
 
 Lifecycle: connect the MCP server, run the loop, disconnect. Async
 context managers exist so you do not leak Node processes. A loop that
@@ -284,8 +270,7 @@ exercise cannot bind a port.
 The inner agent still needs a model that can **call** those tools
 reliably. A cheap model that cannot emit valid tool JSON will spin
 the layer-2 controller without ever filling `findings`. That is a
-routing problem from [ch. 8](../8-deploying-agents/), not a reason to
-delete the gate.
+routing problem: pick a model that can tool-call, then keep the gate.
 
 ### Iteration body output
 
@@ -293,8 +278,8 @@ Each cycle the inner agent produces work. The controller must
 **parse** that work. Free-form markdown is a blog post, not a control
 signal.
 
-Define a typed iteration model and force the agent to fill it
-(structured outputs, as in [ch. 2](../2-llms-prompting-agents/)):
+Define a typed iteration model and force the agent to fill it with
+structured outputs:
 
 ```
   ResearchIteration
@@ -309,8 +294,8 @@ Define a typed iteration model and force the agent to fill it
 
 The controller's job after `Runner.run()`:
 
-1. Validate the schema (reject extras; chapter 8's injection lesson
-   applies to tool-shaped output too).
+1. Validate the schema (reject extras; injection lessons apply to
+   tool-shaped output too).
 2. Merge findings into `ResearchState` (dedupe URLs).
 3. Apply `subtopic_updates` to `ResearchPlan` with rules *you* own
    (do not let status jump to `complete` without a source if that is
@@ -330,12 +315,10 @@ The controller's job after `Runner.run()`:
   termination gate
 ```
 
-**Problem** — Trusting `goal_satisfied=True` because the model is
-confident.
-
-**Solution** — Treat self-assessment as one vote. Layered gates
-below. A second "goal/quality" agent is allowed if your eval budget
-can stand it; it is still not a proof.
+Trusting `goal_satisfied=True` because the model is confident is how
+loops escape homework. Treat self-assessment as one vote. Layered
+gates below. A second "goal/quality" agent is allowed if your eval
+budget can stand it; it is still not a proof.
 
 ### The termination gate
 
@@ -362,7 +345,7 @@ context if you keep blowing it; do not only raise the cap.
 **Goal satisfied** is the happy path. If only the researching agent
 votes, it will eventually vote yes to escape the homework. Mitigations:
 require `complete` on all subtopics, require N independent sources,
-or ask a separate judge (chapter 7 critic energy).
+or ask a separate judge.
 
 **Quality threshold** (e.g. confidence ≥ 0.85) is the same trap unless
 an external scorer owns the number. Use it as a *shortcut exit* when
@@ -428,9 +411,9 @@ Keep the researcher off formatting. Headings, executive summary, and
 "gaps and limitations" belong to synthesis. Mixing them produces a
 half-report at iteration 3 that the loop is afraid to invalidate.
 
-Deploy-shaped extras (chapter 8) that belong in this function even in
-a lab: per-iteration timeout, cost counter, structured logs with
-`iteration` and `gate_reason`.
+Deploy-shaped extras that belong in this function even in a lab:
+per-iteration timeout, cost counter, structured logs with `iteration`
+and `gate_reason`.
 
 ### Synthesizing the final output
 
@@ -499,7 +482,7 @@ order id." Those want one tool call and a schema, not a campaign.
 ```
 
 If the failure mode is "wrong tool schema" or "bad retrieval," a loop
-will repeat the failure. Fix layer 2 tools / layer 4 knowledge first.
+will repeat the failure. Fix the tools and the knowledge path first.
 
 ### A repetitive task loop agent
 
@@ -524,9 +507,8 @@ research plan.
 
 No strategic plan is required: the list *is* the plan. The inner
 agent still runs SPAL per item (maybe a tool, maybe a model
-transform). The controller still owns retries, idempotency keys
-(chapter 8), and "do not hide a failed item inside a cheerful
-paragraph."
+transform). The controller still owns retries, idempotency keys,
+and "do not hide a failed item inside a cheerful paragraph."
 
 ```
   +--> dequeue item
@@ -570,14 +552,11 @@ agent is:
   hub votes stop                   stop may be a vote or a chair
 ```
 
-This is the same fork as [ch. 4](../4-multi-agent-systems/)
-(hub-and-spoke vs collaboration), now drawn as a **loop**: the hub
-or the team may iterate until a meta-level gate fires. Chapter 4
-taught handoffs and guardrails. This chapter teaches **when the
-outer iteration is itself agentic**.
-
-Platform workflows that *host* either subtype as HTTP jobs:
-[platform ch. 8](../../platform/8-workflow-service/) — mention only.
+This is the same fork as hub-and-spoke versus collaboration among
+peers, now drawn as a **loop**: the hub or the team may iterate
+until a meta-level gate fires. Earlier multi-agent chapters teach
+handoffs and guardrails. This chapter teaches **when the outer
+iteration is itself agentic**.
 
 ### Multi-agent orchestration loops
 
@@ -613,10 +592,10 @@ worker returns a surprise ("this vendor is a subsidiary; research
 the parent"). A hardcoded `for subtopic in plan` cannot notice that
 without you encoding the rule.
 
-What you pay: the hub is a bottleneck and a context hog (chapter 4's
-warning, still true). The hub must get **typed, small** worker
-returns, not novel-length dumps. Timeouts and budgets apply **per
-delegation** and to the meta loop as a whole — two fuses.
+What you pay: the hub is a bottleneck and a context hog. The hub
+must get **typed, small** worker returns, not novel-length dumps.
+Timeouts and budgets apply **per delegation** and to the meta loop
+as a whole — two fuses.
 
 Instructions for the hub should name the workers as tools, forbid
 doing the specialist work itself, and require an explicit
@@ -673,19 +652,17 @@ When this subtype wins: the product *is* multiple viewpoints
 (debate, red-team plus builder, style plus factuality). When it
 loses: you needed a queue of invoices. Use the task loop.
 
-Chapter 4's costs still apply: traces get harder; you will want
-[ch. 7](../7-evaluation-and-feedback/) on the shared artifacts, not
-only on each speaker's prose. Guardrails on who may write which
+Traces get harder under collaboration; score the shared artifacts,
+not only each speaker's prose. Guardrails on who may write which
 slot (critic cannot silently mark a subtopic complete) are
-behavioral policy from the deploy chapter, not a vibe in the
-persona.
+behavioral policy you enforce in code, not a vibe in the persona.
 
 ```
-  FLOW (ch. 4)          COLLAB LOOP (this chapter)
-  ------------          --------------------------
-  stages in order       rounds over shared state
-  brittle if stage 1    can revisit, at the cost of
-  is wrong              coordination and traces
+  FLOW (ordered stages)     COLLAB LOOP (this chapter)
+  ---------------------     --------------------------
+  stages in order           rounds over shared state
+  brittle if stage 1        can revisit, at the cost of
+  is wrong                  coordination and traces
 ```
 
 Do not mix "we take turns" with "the hub assigned turns but workers
@@ -704,18 +681,10 @@ You now have the loop map:
 - layer 3 as agent-controlled meta: hub orchestration vs peer
   collaboration.
 
-What you do **not** have yet: **cognition and metacognition** as an
+What you do **not** have yet is cognition and metacognition as an
 architecture — attention, confidence gates, stagnation as a *mind*
-problem rather than a `if overlap` problem. That is
-[ch. 10](../10-cognitive-agents/).
-
-What this folder will not become: a workflow engine or a full
-multi-agent operating manual. When you need handoffs, A2A flows, and
-guardrail agents as *graph design*, or HTTP job lifecycle as
-*platform design*, leave this directory:
-
-- [ch. 4 — Multi-agent systems](../4-multi-agent-systems/)
-- [platform ch. 8 — Workflow Service](../../platform/8-workflow-service/)
+problem rather than an `if overlap` problem. That is the next
+chapter's job.
 
 Keep the layers named. A `while` that cannot say whether it is layer
 2 or 3 is how campaigns thrash.
@@ -754,5 +723,3 @@ Keep the layers named. A `while` that cannot say whether it is layer
 10. A synthesizer starts calling search "just to fill gaps" with no
     MAX. Which layer did you accidentally nest, and what trace
     fields would have shown the encore?
-
-Continue to [Cognitive agents](../10-cognitive-agents/).
