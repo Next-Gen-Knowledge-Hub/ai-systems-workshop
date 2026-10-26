@@ -1,422 +1,232 @@
 # 11. Field tips
 
-Companion notes for **Chapter 11** of *AI Agents in Action* (2nd edition,
-Micheal Lanham; Manning, 2026).
+Companion notes for **Chapter 11** of *AI Agents in Action* (2nd edition, Micheal Lanham; Manning, 2026).
 
-Architecture is behind you. This chapter is **what survives contact with
-a queue**. Skip it and you will rebuild the same support bot, the same
-RAG blob, and the same "research" crawler that never stops — each time
-surprised that the failure was a *layer*, not a model.
+These notes are the checklists that survive a real queue. Hang every tip on the same five layers: persona, tools, reasoning, knowledge and memory, evaluation. Optimize one layer, then integrate it. A witty persona will not save a blunt tool, and a perfect index will not save a loop with no stop. Support, RAG, and deep research are how you wire this stack for one job. If an incident cannot be tagged to a layer, the map is not in use yet.
 
-These notes are checklists and shapes, not a third framework. When an
-incident cannot be tagged to a layer, the five-layer map is not yet in
-your bones.
-
-## The mental model
-
-Tips are cheap if they are a pile. They stick if they hang on the same
-five shelves you have used since the start of the Agents track.
+## 1. Persona
 
 ```
-  +--------------------------------------------------------------+
-  | 5  Evaluation / feedback    traces, judges, HITL, guardrails |
-  +--------------------------------------------------------------+
-  | 4  Knowledge / memory       RAG tool, session vs long-term   |
-  +--------------------------------------------------------------+
-  | 3  Reasoning / planning     ReAct, plan-then-do, caps, review|
-  +--------------------------------------------------------------+
-  | 2  Tools / actions          one job each, schemas, failures  |
-  +--------------------------------------------------------------+
-  | 1  Persona                  contract, scope, I-don't-know    |
-  +--------------------------------------------------------------+
++--------------------------------------------------------------+
+| 5  Evaluation / feedback    traces, judges, humans, gates    |
++--------------------------------------------------------------+
+| 4  Knowledge / memory       retrieval tool, session vs long  |
++--------------------------------------------------------------+
+| 3  Reasoning / planning     ReAct, plan-then-do, caps        |
++--------------------------------------------------------------+
+| 2  Tools / actions          one job each, schemas, failures  |
++--------------------------------------------------------------+
+| 1  Persona                  contract, scope, I-don't-know    |
++--------------------------------------------------------------+
 ```
 
-The one sentence to remember: **optimize a layer, then integrate** — a
-witty persona will not save a blunt tool; a perfect index will not save a
-loop with no stop.
+Treat the instructions as an **API contract**. Tools, memory, and plans inherit whatever you leave vague. Keep a short role, hard boundaries, and an explicit off-ramp. Debug from this shelf upward: did the instructions ask for the right job, do the hands work, is the thought the right size, are the stores honest, and can you prove the run?
 
-Three product shapes in this chapter reuse the stack. They are not new
-layers. They are **how the stack is wired for a job**:
+Two failures show up in the transcript before any tool is wrong.
+
+1. **Buried rule**: The lethal constraint sits in the middle of a prompt that reads like a novel. Recency drift hides it under the latest tool result.
+2. **Missing no**: Nobody named the jobs that are out of scope, so the bot takes them.
+
+* **Role and fences**: State what the agent does, what it refuses, and who it defers to. Repeat the lethal rules at the **top and the bottom**. Models drift across a long tool trace. "Never refund without lookup" has to still be in view after that trace, or the model will refund from the conversation alone.
+* **I-don't-know**: Make "I don't know" a named action with three exits: ask, retrieve, or escalate. Completing a policy from parametric memory skips that action. A fluent answer about a return window the store never returned is this failure.
+* **Narrow charter**: One job beats a "digital employee." A specialized agent is easier to evaluate and cheaper to route. Add a domain later, on purpose, after the first job has a score. A bot that also writes marketing copy will invent a coupon while it is "helping."
+* **Structured outputs**: When another program or agent consumes the result, require JSON that matches a schema (Pydantic or a dataclass). That removes a class of parse bugs and the token padding models add to look helpful. Save prose for a human reader.
+* **Dynamic instructions**: Inject facts that rot — the date, the tenant, the product version, the user locale — with a function at run time. A hardcoded Tuesday promo sits in a prompt you will not reopen, and it will still be Tuesday in June. Injecting *everything* on every turn is another dumping ground. Pass the facts this turn needs.
+
+A constraint that is a **fact about the company** belongs in knowledge you retrieve. A constraint that is **how to behave** stays in the persona. Mixing them puts the legal policy in a system prompt nobody owns, next to the tone rules, where neither can be updated alone.
+
+## 2. Tools and actions
+
+Tools are the hands and the senses. A sloppy schema makes a smart model look drunk. A good schema makes a smaller model look competent. Prefer one responsibility, typed parameters, and failure as part of the contract.
+
+Four failures cover most bad tool lists.
+
+1. **God-tool**: A function named `do_anything`. The model calls it as a fidget because the description never says when to refuse.
+2. **Mushy docstring**: The name and the arguments do not tell the model what the call is for, so it guesses.
+3. **Missing timeout**: The call hangs, and the agent fills the silence with a success story.
+4. **Starred MCP server**: The server was added because a blog post starred it. Nobody read the package or asked what filesystem it can reach.
+
+* **Single-responsibility tools**: The name, the description, and the arguments are the model's user manual. If you cannot say when *not* to call the tool, the model will call it as a fidget. Split "look up the order" from "refund the order." One description cannot tell the truth about both.
+* **Function tools for your code**: Prefer function tools for your own code and APIs. A decorator that builds the schema from the types and the docstring stays tied to the function you test. A hand-written JSON blob drifts, and the model then calls a parameter the function no longer accepts.
+* **When tools run**: Force a tool when the turn is worthless without live data. Forbid tools when the turn is a rewrite of text you already have. Stop after the first sufficient call when one API result is the answer. Put that rule in the persona and in the tool settings. A sentence in the prompt, with no runtime knob, does not control the call.
+* **Hosted tools and MCP**: Use a hosted or prebuilt tool, including MCP, for code, the web, and files when someone actually maintains the server. Due diligence is reading the package, checking who publishes it, and threat-modeling what it can reach. A random `npx` package is a supply chain you just gave your filesystem.
+* **Failure as a payload**: Plan a timeout, retries with a budget, and an error payload the model can read: the status, what was tried, and what to do next. A silent exception is how an agent invents success. It will tell the customer the refund went through because the tool returned nothing and the persona is helpful.
+
+Bucket every tool by what it does to the world: retrieve, mutate, memory, plan, evaluate. A guardrail attaches to the bucket. A search tool and a refund tool do not share an approval policy just because both are "tools."
+
+## 3. Reasoning and planning
+
+Frontier models already think inside the forward pass. Add structure when the horizon is long, when several tools compete, or when a wrong act is expensive. Match the primitive to the difficulty, cap the loop, and glance back.
+
+Four mismatches show up constantly.
+
+1. **ReAct on a FAQ**: The answer is one retrieval. A thought-act loop adds hops and no new evidence.
+2. **A tree on order status**: "What's my order status?" is a lookup, not a branching search.
+3. **No cap**: The loop runs until a person kills the tab.
+4. **No last look**: The agent sends the email, or the refund, with nobody reading the draft.
+
+* **ReAct or an honest chain-of-thought**: Use ReAct, or an honest chain-of-thought, for nontrivial work. The rhythm is thought, act, observation, then the next thought. A single chain-of-thought with a tool call stuffed into the same pass is still one pass. It cannot change its mind when the observation contradicts the thought.
+* **Plan-then-execute**: For a big goal, write a short checklist into structured state, or hand the checklist to a sequential-thinking server. That beats improvising twenty hops in the transcript. The plan is data. You can print it, diff it, and see which step is stuck.
+* **Iteration cap**: Put a hard cap on iterations. When the cap hits, return a useful failure: "I hit the budget; here is what I have; here is the missing slot." That is a termination story. The failure mode you are avoiding is a tab that spins until someone kills the process.
+* **Self-review before final**: On anything irreversible, or anything the user will read at length, run a cheap second pass before you send. It catches "we cited the table of contents" and "we emailed the wrong tenant." Skip that pass on one-shot classification, where the second look costs more than the mistake.
+* **Turn reasoning down**: When the task is one shot and the model is strong, turn the extra reasoning off. Paying for a chain on "format this JSON" grows the bill while the output stays flat. Order status, after the lookup has already returned, is the same kind of job.
+
+Caps and a last look still apply on a single ReAct agent. A separate step that picks the reasoning primitive for you does not make the cap optional, and it does not make the last look optional.
+
+## 4. Knowledge and memory
+
+Retrieval is how knowledge and memory stay honest. Stuffing a PDF into the prompt is a demo that dies on the second document.
+
+Four traps account for most of the damage.
+
+1. **Docs in the system prompt**: The policy is pasted into every turn, so the window fills up and nobody can tell a miss from a hit.
+2. **Transcript as the wiki**: The session is treated as the corporate record. A one-time exception in chat becomes the rule next week.
+3. **One giant index**: Every tenant and every product line shares a vector index. A query for product A returns product B's policy.
+4. **Default embedding**: The model was whatever the tutorial installed. SKUs, languages, and cost were never chosen.
+
+* **Retrieval as a tool**: Give the model a retrieval tool over a store with metadata filters: product, version, locale, tenant. The model has to *call* it. Pre-stuffing the paragraph skips that call, so you cannot tell a miss from a hit, and you cannot filter the tenant.
+* **Session versus long-term**: The thread is short-term working memory. "The user said their order id two turns ago" lives there. Facts that should survive a new chat — "this user prefers email," "this account is on Plan Enterprise" — live in a store you retrieve on purpose. Dumping the full graph into every prompt spends the window on facts this turn does not need.
+* **Prune and shard**: Use an approximate-nearest-neighbor index (HNSW or IVF), shard by domain, and filter. Scale shows up as a retrieval problem before it shows up as a model problem. One index for every product line is how a query for product A returns product B's policy.
+* **Hybrid search**: Dense similarity misses SKUs and error codes, because those strings are not "similar," they are exact. Keyword search (BM25) misses paraphrase. Graph or hierarchical search earns its keep on "related to this entity." Combine them. A single method will be wrong on a corpus that has both error codes and prose.
+* **Embeddings on purpose**: Choose the dimensions, the quality, and a multilingual or domain-tuned variant. Price the cost per million tokens at ingest and again at query. Changing embedding families later is a re-index of the corpus, not a config flip you do on a Friday.
+
+Org-wide indexes and session token budgets can live in shared platform services. The agent still chooses when to retrieve. A platform index does not fire itself.
+
+## 5. Evaluation and feedback
+
+You will not improve what you do not measure. Day one is logs, a tiny eval set, and a guardrail that can say no. A finished Phoenix deployment can wait.
+
+The usual starting state has three holes.
+
+1. **Demo energy, no traces**: The run looked good on stage. Nothing was logged, so Tuesday's failure has no prompt, no tool arguments, and no outcome.
+2. **Edits with no score**: The prompt changed, the model changed, or the index changed, and nobody ran a set that could move a number.
+3. **Slack as the dataset**: Humans yell, and the yell has nowhere to land. By Monday the label is gone.
+
+* **Traces for 2 a.m.**: Log the prompt, the tool arguments, the tool results, the token counts, the latency, and the outcome. SDK tracing and Phoenix exist so you are not grepping stdout at 2 a.m. Ship those traces to the observability stack you already run. A trace that lives only on a laptop does not help the person on call.
+* **Automated evals**: Keep a curated set and score accuracy, grounding, safety, and resolution. Run it when the prompt changes, when the model changes, and when the index changes. An LLM-as-judge is a tool. Pin the judge's model version, and spot-check its scores with a human. An unpinned judge moves the goalposts between runs.
+* **Human in the loop**: Thumbs, a reason, and a queue beat a feedback link buried in the footer. On a support agent, the human who took the escalation is the label. Write that label down next to the trace, or the yell in Slack evaporates by Monday.
+* **Guardrails and moderation**: This layer is schema validation, a content policy, and a grounding check: did this claim appear in a retrieved span? Put gates inside the loop, on workspace confidence, on the schema, or on a critic. Put judges around the loop for the runs you sample later. The prompt sentence "be safe" does not do any of that work.
+
+Org-wide scores, shared datasets, and A/B experiments are a platform concern. This layer is the eval loop on the agent you are shipping. Stay here until that loop exists.
+
+## 6. A customer support agent
+
+Support is the shape most teams ship first and regret first. It talks to angry humans, it can mutate tickets, and "almost right" is a compliance event. An internal IT helpdesk is the same shape with a different persona. The wiring is the five layers, aimed at one queue:
 
 ```
-  support     persona = role + policy
-              tools   = lookup, ticket APIs, escalate
-              reason  = triage + HITL
-              knowledge = manuals (RAG)
-              eval    = logs + humans
-
-  RAG system  often several *small* agents around retrieval
-              (router, retriever, answerer, optional critic)
-
-  research    outer task loop: planner + stateless workers
-              + critic + a termination story
+persona    role + policy fences
+tools      lookup, ticket APIs, escalate
+reason     triage, then act or hand off
+knowledge  manuals, via retrieval
+eval       logs + the human who caught the escalation
 ```
-
-If your design review cannot point at this diagram, you are still arguing
-about models.
-
-## Field tips by the five layers
-
-Walk the stack bottom-up the way you debug: persona first (did we even
-ask for the right job?), then hands, then thought, then stores, then
-proof.
-
-### Persona
-
-Treat instructions as an **API contract**, not as brand copy. Downstream
-tools, memory, and plans inherit whatever you leave vague.
-
-A prompt that reads like a novel buries the one rule that mattered under
-recency drift. The bot does extra jobs because nobody said no. Keep a
-short role, hard boundaries, and an explicit off-ramp.
-
-- **Role and fences.** What it does, what it refuses, who it defers to.
-  Repeat the lethal rules at the **top and bottom**. Models drift; your
-  "never refund without lookup" should survive a long tool trace.
-- **I-don't-know as a first-class action.** Not a vibe. A named behavior:
-  ask, retrieve, or escalate — do not complete a policy from parametric
-  memory.
-- **Narrow charter.** One job beats a "digital employee." Specialized
-  agents are easier to eval and cheaper to route. Add domains later, on
-  purpose.
-- **Structured outputs** when another program (or agent) consumes the
-  result. JSON that matches a schema (Pydantic / dataclass) kills a class
-  of parse bugs and token padding. Prose is for humans.
-- **Dynamic instructions** for facts that rot (date, tenant, product
-  version, user locale). Inject with a function at run time. Do not
-  hardcode Tuesday's promo in a prompt you will not reopen. Do not inject
-  *everything* — over-injection is another dumping ground.
-
-Field rule: if a constraint is a **fact about the company**, it wants
-layer 4 (knowledge you retrieve). If it is **how to behave**, it stays
-in the persona. Mixing them is how legal ends up in a system prompt no
-one owns.
-
-### Tools and actions
-
-Tools are hands and senses. A sloppy schema makes a smart model look
-drunk. A good schema makes a smaller model look competent.
-
-God-tools ("do_anything"), mushy docstrings, missing timeouts, and MCP
-servers pulled in because a blog post starred them are the usual
-failures. Prefer one responsibility, typed params, and failure as part
-of the contract.
-
-- **Single-responsibility tools.** Name, description, and arguments are
-  the model's user manual. If you cannot say when *not* to call it, the
-  model will call it as a fidget.
-- **Prefer function tools** for *your* code and APIs. Decorators that
-  build schemas from types and docstrings are easier to test than a
-  hand-written JSON blob that drifted from the function.
-- **Control when tools run.** Force a tool when the turn is worthless
-  without live data. Forbid tools when the turn is a rewrite. Stop after
-  the first sufficient call when one API result is the answer. Say this
-  in the persona *and* in tool settings — prompts without runtime knobs
-  are wishes.
-- **Hosted / prebuilt tools and MCP** for code, web, files, when the
-  server is actually maintained. Due diligence means reading the package,
-  checking who publishes it, and threat-modeling what it can reach. A
-  random npx package is a supply chain, not a feature.
-- **Plan for failure.** Timeouts, retries with a budget, and **error
-  payloads the model can read** (status, what was tried, what to do
-  next). Silent exceptions are how agents invent success.
-
-Bucket tools by what they do: retrieve, mutate, memory, plan, eval.
-Guardrails attach to buckets, not to "tools" as a pile.
-
-### Reasoning and planning
-
-Frontier models already "think" in the forward pass. You add *structure*
-when the horizon is long, tools compete, or a wrong act is expensive.
-
-ReAct on a FAQ, a tree on "what's my order status," a loop with no cap,
-or no last look before send are mismatches. Match the primitive to
-difficulty; cap; glance back.
-
-- **ReAct (or an honest CoT) for nontrivial work.** Thought, act,
-  observation, *then* the next thought. A single CoT with a tool call
-  stuffed in is still one pass.
-- **Plan-then-execute for big goals.** A short checklist in structured
-  state (or a sequential-thinking server) beats improvising twenty hops.
-  The plan is data. You can print it.
-- **Limit iterations.** Hard cap, then a useful failure ("I hit the
-  budget; here is what I have; here is the missing slot") — a
-  termination story, not a hung tab.
-- **Self-review before final** on anything irreversible or user-visible
-  at length. A cheap second pass catches "we cited the TOC" and "we
-  emailed the wrong tenant." Skip it on one-shot classification.
-- **Turn reasoning down** when the task is one-shot and the model is
-  strong. Paying for a chain on "format this JSON" is how bills grow
-  while quality stays flat.
-
-If you already run a cognitive shop floor with attention picking the
-primitive, the field tip still applies on a single ReAct agent: caps and
-a last look are not optional because you skipped the full architecture.
-
-### Knowledge and memory
-
-Retrieval is how knowledge and memory stay honest. Stuffing PDFs into
-the prompt is not a strategy; it is a demo that dies on the second
-document.
-
-Docs in the system prompt, the session transcript treated as the
-corporate wiki, one giant vector index, and embeddings chosen because
-they were the default are the usual traps. Prefer RAG as a **tool**;
-keep session short-term and long-term separate; prune; hybrid; pick
-embeddings on purpose.
-
-- **RAG first-class.** A retrieval tool over a store with **metadata
-  filters** (product, version, locale, tenant). The model should have to
-  *call* it, not hope the right paragraph was pre-stuffed.
-- **Session vs long-term.** The thread is short-term working memory.
-  User facts and preferences that should survive a new chat belong in a
-  store you retrieve *selectively*. Do not dump the full graph into
-  every prompt.
-- **Prune and shard.** ANN indexes (HNSW / IVF), **domain shards**,
-  filters. Scale is a retrieval problem before it is a model problem.
-- **Hybrid search.** Dense similarity misses SKUs and error codes.
-  Keyword / BM25 misses paraphrase. Graph or hierarchical search earns
-  its keep on "related to this entity." Combine; do not pick a religion.
-- **Embeddings on purpose.** Dimensions, quality, multilingual or
-  domain-tuned variants, **cost per million tokens at ingest and query**.
-  Changing embedding families later is a re-index, not a config flip.
-
-Org-wide indexes and session token budgets live in platform services.
-Mention that only as a reminder: the agent still has to *choose* when to
-retrieve.
-
-### Evaluation and feedback
-
-You will not improve what you do not measure. You also will not ship a
-perfect Phoenix cathedral on day one. Start with **logs, a tiny eval set,
-and a guardrail that can say no**. Grow.
-
-Demo energy, no traces, prompt edits with no score, and humans yelling in
-Slack with nowhere to put the yell are the usual starting state. Trace,
-automate a slice, listen to humans, encode policy as code.
-
-- **Trace everything you will debug at 2 a.m.** Prompts, tool args and
-  results, tokens, latency, outcome. SDK tracing and Phoenix exist so
-  you are not grepping stdout. Ship those traces to the observability
-  stack you already have.
-- **Automate evals** on a curated set: accuracy, grounding, safety,
-  resolution. Run on prompt / model / index changes. LLM-as-judge is a
-  tool, not a priest — pin versions and spot-check with humans.
-- **HITL.** Thumbs, reasons, and queues beat a buried "feedback" link.
-  Support agents especially: the human who took the escalation *is* the
-  label.
-- **Guardrails and moderation.** Schema validation, content policy,
-  grounding ("claim in retrieved span?"). Put gates in the loop (on
-  workspace confidence, schema, or a critic) and judges around the loop.
-  Prompt-only "be safe" is not this layer.
-
-Org-wide scores, datasets, and A/B experiments are a platform concern.
-Stay here when you need the **agent's** eval loop.
-
-## Tips for a customer support agent
-
-Support is the shape most teams ship first and regret first: it talks to
-angry humans, it can mutate tickets, and "almost right" is a compliance
-event. Internal IT helpdesks are the same shape with a different persona.
-
-Map the layers without inventing new ones:
 
 | Layer | In this product |
 |---|---|
-| Persona | Support role, tone, **policy fences**, escalation manners |
-| Tools | Order lookup, subscription, refund *or* "create ticket," never both as one god-tool |
-| Reasoning | Triage (intent, risk, missing slots), then act or HITL |
-| Knowledge | RAG over manuals, policies, versioned SKUs |
-| Eval | Traces, CSAT / resolution, human review of escalations |
+| Persona | Support role, tone, policy fences, escalation manners |
+| Tools | Order lookup, subscription, refund *or* "create ticket" — never both mutations as one god-tool |
+| Reasoning | Triage for intent, risk, and missing slots, then act or hand off |
+| Knowledge | Retrieval over manuals, policies, and versioned SKUs |
+| Evaluation | Traces, resolution and CSAT, human review of escalations |
 
-**Narrow the charter.** Orders, returns, status — then add billing, then
-add device troubleshooting. A bot that also writes marketing copy will
-hallucinate a coupon. Light and focused is not a MVP cop-out; it is how
-you keep latency and eval tractable.
+* **Narrow charter**: Start with orders, returns, and status. Add billing next. Add device troubleshooting after that. A bot whose charter also includes marketing copy will hallucinate a coupon. A light charter is how you keep latency and the eval set small enough to read.
+* **Ground policy and facts**: For any answer that states a policy or a fact, retrieve first, then cite or quote the span. When the store is empty, ask or escalate. The default failure on this product is a coverage bluff: fluent invention on an empty retrieval.
+* **Safe actions**: Read-only lookups can run eagerly. A mutation — refund, cancel, a change to personal data — needs confirmation, an identity check, and often a human. Hide the refund tool until triage says the intent is a refund *and* the order lookup succeeded. The model should not see a tool it is not allowed to call on this turn.
+* **Triage is the plan**: Classify before you act.
 
-**Ground every answer that is a policy or a fact.** Retrieval first; cite
-or quote the span; **I-don't-know / escalate** when the store is empty.
-Coverage bluff — fluent invention when retrieval is empty — is this
-product's default failure.
+  1. Can the docs answer this?
+  2. Does it need an API?
+  3. Is this rage, legal, or safety?
+  4. Is a slot missing, such as the order id?
 
-**Safe actions.** Read-only lookups can be eager. Mutations (refund,
-cancel, PII change) want **confirmation, identity, and often a human**.
-Tool policy is the guardrail: the model should not even *see* a refund
-tool until triage says the intent is refund *and* the order lookup
-succeeded.
+  A missing slot is a question, not a guess you fill from a previous ticket. A high-risk intent skips the happy path and goes to a human with a packet: what was tried, and what was retrieved.
+* **Small memory**: Session memory is the ticket so far. Long-term memory is "this user prefers email" and "this account is on plan X," fetched for this turn. Memorizing every past chat as if it were policy poisons the next ticket. Someone's one-time exception becomes the new rule.
+* **Eval that matches the job**: Track resolution rate, escalation rate, grounding failures, and wrong-order refunds. A wrong-order refund is a tools incident and an evaluation incident. It is not a tone incident. Sample traces every week. A witty persona attached to a wrong refund is a failed refund.
 
-**Triage is the plan.** Classify: can we answer from docs, do we need an
-API, is this rage / legal / safety, is a slot missing (order id)? Missing
-slots are questions, not guesses. High-risk intents skip the happy path
-and go to HITL with a packet (what was tried, what was retrieved).
+Design the handoff payload with the same care as the greeting. A support agent that cannot escalate cleanly is stuck holding a ticket it should have given away. Autonomy here includes the ability to stop.
 
-**Memory is small and purposeful.** Session: the ticket so far. Long-term:
-"this user prefers email, this account is on plan X" — retrieved, not
-stuffed. Do not memorize every chat as policy.
+## 7. Design patterns for a RAG agent
 
-**Eval that matches the job.** Resolution rate, escalation rate, grounding
-fails, **wrong-order refunds** (that is a tools-layer plus eval-layer
-incident, not a "tone" incident). Sample traces weekly. A witty persona
-with a wrong refund is not a persona win.
-
-A support agent that cannot escalate cleanly is not autonomous. It is
-stuck. Design the handoff payload as carefully as the greeting.
-
-## Design patterns for a RAG agent system
-
-RAG is usually **infrastructure for another agent** (support, research,
-internal Q&A), not a product with one box labeled "RAG." Retrieval is the
-engine. Agentic control is routing, critique, and *when* to retrieve
-again.
-
-Teams either wrap an orchestrator around a one-shot retrieve that already
-worked, or build a single mega-agent that retrieves, answers, critiques,
-and files Jira. Prefer agents only for jobs one retrieve-and-generate
-cannot do. Keep them small.
+Retrieval-augmented generation is usually the infrastructure under another agent: support, research, or internal Q&A. It is rarely a product whose only box says "RAG." Retrieval is the engine. The agentic part is routing, critique, and the decision to retrieve again. Two overbuilds show up in design reviews. One wraps an orchestrator around a one-shot retrieve that already worked. The other is a single mega-agent that retrieves, answers, critiques, and files a Jira. Add an agent only for a job that one retrieve-and-generate cannot do, and keep that agent small.
 
 ```
-  query
-    |
-    v
-  [ triage / router ] -- which index, which rewrite, skip RAG?
-    |
-    v
-  [ retriever ]  -- hybrid + filters + optional rerank
-    |
-    v
-  [ answerer ]   -- "use only context"; citations required
-    |
-    +---- optional [ critic / CRAG ]
-              low grounding --> rewrite query or different shard
-              else --> release
+query
+  |
+  v
+[ triage / router ]  -- which index, which rewrite, skip retrieval?
+  |
+  v
+[ retriever ]        -- hybrid + filters + optional rerank
+  |
+  v
+[ answerer ]         -- use only the context; citations required
+  |
+  +---- optional [ critic / CRAG ]
+            low grounding --> rewrite the query or change shard
+            else           --> release
 ```
 
-**Use agents only when needed.** One-shot RAG (embed query, top-k,
-generate) is the correct product for many FAQ corpora. Add a router when
-indexes or tools **branch**. Add a diagnostic agent when "no hits" should
-mean something other than a shrug. Add action tools only when the answer
-must *do* a thing, not just say a thing.
+* **Agents only when needed**: Add a role only when one retrieve-and-generate cannot do the job.
 
-**Modular roles.** Triage, retrieve, answer; optionally a critic for
-corrective retrieval. Each role has a tiny persona and a tiny tool list.
-That is hub-and-spoke more often than a debate club.
+  1. **One-shot**: Embed the query, take top-k, generate. That is the right product for many FAQ corpora.
+  2. **Router**: Add one when indexes or tools branch, so a billing question does not search the HR corpus.
+  3. **Diagnostic agent**: Add one when "no hits" should mean something other than a shrug, such as a bad filter or the wrong product line.
+  4. **Action tool**: Add one only when the answer must do a thing, not only say a thing.
+* **Modular roles**: Split triage, retrieve, and answer. Add a critic when you want corrective retrieval. Each role gets a tiny persona and a tiny tool list. That assembly is a hub with workers more often than a debate among peers. A debate club on a shared thread will drown the answerer in the router's scratchpad.
+* **Retrieval is the product**: Treat the index as the product. Approximate nearest neighbors, metadata filters, domain embeddings, a reranker, and hybrid search each earn a place. Isolate indexes per tenant or per product line. Searching the wrong corpus is a safety bug, not a quality nit, because the answer can be fluent and forbidden. Stale documents on ingest will hurt you more than the choice of chat model. The retrieval tool still has to expose the filters, or the model cannot ask for "version 3.2, this tenant."
+* **Grounding discipline**: Instruct the answerer to use the provided context or to say it cannot answer. Require a citation or an excerpt. A grounding check used as a gate is cheaper than a scandal. If you already keep structured workspace state, pair that gate with a confidence check on the state. Low confidence goes back to retrieval or to a human, not out to the user.
+* **Corrective retrieval**: When the critic says the context does not support the draft, reformulate the query, change the filters, try keyword against dense, and only then answer again. Cap how many times the critic may send the query back. Unbounded CRAG is groove lock: the loop keeps rewriting under a scholarly name and never releases an answer.
+* **Eval the pipeline**: Measure hit rate, citation validity, the rate of answers that actually come from the context, and p95 latency. Change one of chunking, the embedding, the retriever, or the prompt. Then measure. Changing all four in one experiment produces a story and no attribution. You will not know which edit moved the number.
 
-**Optimize retrieval as if it were the product** (because it is). ANN,
-metadata filters, domain embeddings, rerankers, **hybrid**. Isolated
-indexes per tenant or product line — searching the wrong corpus is a
-safety bug, not a quality nit. Ingest lifecycle (stale docs) will hurt
-you more than the choice of chat model. The agent still needs a retrieval
-tool that exposes filters.
+## 8. Blueprint for a deep research agent
 
-**Grounding discipline.** Instructions: use the provided context or say
-you cannot. Require citations or excerpts. A **grounding agent** as a
-gate is cheaper than a scandal. Pair with a confidence gate on structured
-workspace state if you already have one.
-
-**Corrective retrieval.** Critic says "this context does not support the
-draft" → reformulate, change filters, try keyword vs dense, *then*
-answer again. Cap the correctives. Unbounded CRAG is groove lock with a
-scholarly name.
-
-**Eval the pipeline, not the vibes.** Hit rate, citation validity,
-answer-from-context rate, p95 latency. Change one of: chunking, embedding,
-retriever, prompt. Then measure. Changing all four is how you get a story
-and no attribution.
-
-## Blueprint for a deep research agent
-
-Deep research is **open-ended gathering plus synthesis**: web or internal
-stores, many sources, an outline that changes as evidence arrives.
-Frontier vendors ship a consumer version. You build an internal one when
-the sources are **yours** (wikis, tickets, warehouses) or the policy for
-"what counts as a source" is yours.
-
-This is the outer task-loop shape with field constraints: a planner that
-owns plan and state, workers that return typed deltas, a critic, and
-layered stop rules. Do not start here if a RAG system plus a critic
-answers the question. Complexity is expensive.
+Deep research is open-ended gathering plus synthesis. The sources may be the web or your own stores. There are many of them. The outline changes as evidence arrives. Frontier vendors ship a consumer version of this. Build an internal one when the sources are yours — wikis, tickets, warehouses — or when the policy for what counts as a source is yours. The shape is an outer task loop. A planner owns the plan and the state. Workers return typed deltas. A critic reads the pile. Stop rules are layered, not a single "are we done?" If a retrieval system plus a critic already answers the question, this blueprint is the expensive option. Leave it for that question.
 
 ```
-  goal
-    |
-    v
-  [ planner / brain ]   owns plan + state; never answers a claim
-         |                without a worker result
-         | delegates
-         v
-  [ workers, stateless ]  searcher | extractor | analyst | summarizer
-         |                  tools only; no long memory
-         v
-  [ critic ]            coverage, contradictions, missing views
-         |
-         v
-  [ synthesizer ]       report + gaps + sources
-         |
-         +-- stream outline and partials to the UI
+goal
+  |
+  v
+[ planner ]            owns plan + state; a claim needs a worker result
+       | delegates
+       v
+[ workers, stateless ] searcher | extractor | analyst | summarizer
+       |               tools only; fresh context; no long memory
+       v
+[ critic ]             coverage, contradictions, missing views
+       |
+       v
+[ synthesizer ]        report + gaps + sources
+       |
+       +-- stream the outline and partials to the UI
 ```
 
-**Two-tier orchestration.** A planner holds the long-horizon plan and
-state (subtopics, status, notes). Workers are **tool-like**: one skill,
-fresh context, result back. Giving every worker the full memoir is how
-you pay for noise and get role collapse.
+* **Two-tier orchestration**: The planner holds the long-horizon plan and the state: subtopics, status, and notes. Workers are tool-like. One skill, a fresh context, a typed result back. Giving every worker the full memoir pays for noise, and the roles collapse into one voice that both searches and concludes. The planner never answers an empirical claim itself.
+* **Tool policy on the planner**: Facts come from a retrieval tool and from web or internal search. The contract forbids a direct answer to an empirical claim that has no source. Enforce that in the persona and with `tool_choice`, so the runtime refuses the unsourced answer instead of hoping the model behaves.
+* **Self-critique before freeze**: Before the report freezes, check three things: coverage against the plan, contradictions across sources, and missing stakeholder views. The critic is allowed to send the planner back into the loop. Four stop rules still stack on top of that permission.
 
-**Tool policy on the planner.** Facts come from retrieval and web (or
-internal search) tools. Direct answers to empirical claims without a
-source are forbidden in the contract. This is persona + tool_choice, not
-a hope.
+  1. **Hard cap**: A maximum number of iterations.
+  2. **Budget**: A spend or token ceiling.
+  3. **Quality bar**: A score the critic is willing to freeze.
+  4. **Stagnation**: The notes stopped changing, so another hop will not help.
+* **Streaming**: People will not watch a silent ten-minute job. Stream the outline as it grows, the latest finding, and the subtopics that are still open. The synthesizer at the end is a different agent on purpose. Explorers make a mess of notes. The editor writes the report, with gaps and sources still attached.
+* **Refuse the shape**: Three jobs do not need this loop.
 
-**Self-critique before freeze.** Coverage vs the plan, contradictions
-across sources, missing stakeholder views. The critic should be allowed
-to send the planner back into the loop. Termination still layers: hard
-cap, budget, quality, stagnation.
+  1. Classification.
+  2. A question about a single document.
+  3. A known FAQ.
 
-**Streaming UX.** Users will not watch a silent ten-minute job. Stream
-the outline as it grows, the latest finding, and "still open" subtopics.
-The synthesizer at the end is a different agent on purpose: explorers
-make a mess; editors make a report.
-
-**When to refuse the shape.** Classification, a single-doc question, a
-known FAQ — no loop. If you cannot name the **state object** and the
-**stop rule**, you do not have research. You have a crawler on a credit
-card.
-
-Internal research often swaps Brave/web MCP for **your** document store
-and ticket search. The blueprint does not change. The hands do.
-
-## What you can ship from these tips
-
-A support bot, a RAG graph, and a research loop are buildable from the
-blueprints above. Write down the layer that owns each piece — persona,
-tools, plan, memory, eval — before you add another server. When two
-products copy session stores, keys, and trace configs, that copy is the
-signal to pull those pieces into shared services. Agent vs flow, native
-tools vs MCP, one-shot RAG vs a loop: decide them in the design review
-and write the choice next to the blueprint.
+  If you cannot name the state object — the subtopics, their status, the notes — and you cannot name the stop rule, you do not have research. You have a crawler spending money.
+* **Swap the hands**: Internal research often replaces a Brave or other web MCP server with your document store and your ticket search. The planner, the stateless workers, the critic, the synthesizer, and the stop rules stay. The hands change. The blueprint does not.
 
 ## Check yourself
 
-1. A bug: the bot is charming and refunds the wrong SKU. Name the
-   **layer** you inspect first and the **second** layer you inspect if
-   the first looks clean. Why are they not the same?
-2. Rewrite a fluffy persona ("you are a helpful expert") as a contract:
-   role, two fences, one I-don't-know action, one structured output.
-3. You added six MCP servers in a week. Give two rules from the tools
-   layer that would have rejected at least three of them.
-4. When do you *turn reasoning down*? Give a task from your world where
-   ReAct would be malpractice.
-5. Session memory vs long-term vs RAG: which store holds "the user said
-   their order id two turns ago," which holds "this user is on Plan
-   Enterprise," and which holds "return policy v3.2"? What goes wrong if
-   you merge all three into the system prompt?
-6. What is the smallest eval you would ship with a support agent on
-   Friday, and what would you add after the first week of HITL?
-7. Sketch a support mutation (refund) as a tool policy: when is the tool
-   invisible, when is it callable, when is a human required?
-8. For RAG: when is a one-shot retrieve-and-generate enough, and what
-   symptom tells you you need a router or a critic — not a bigger
-   context window?
-9. Deep research: why are workers stateless, and what happens to the
-   planner if you let it answer a factual claim with no tool result?
-10. Take the support blueprint and the research blueprint. Which pieces
-    are safe to share (a tool schema, a rubric), and which pieces have
-    to stay product-specific (persona fences, stop rules)?
+1. The bot is charming and refunds the wrong SKU. Which layer do you inspect first, which layer do you inspect if that one is clean, and why are those two layers different jobs?
+2. Rewrite "you are a helpful expert" as a contract: a role, two fences, one I-don't-know action, and one structured output. Which of those four is a company fact that belongs in retrieval instead?
+3. You added six MCP servers in a week. Which two rules from the tools layer would have rejected at least three of them, and what would you have asked about the package before installing it?
+4. Name a task where you would turn reasoning down, and a task where ReAct is the wrong primitive. What sentence should the agent return when it hits the iteration cap?
+5. Which store holds "the user said their order id two turns ago," which holds "this user is on Plan Enterprise," and which holds "return policy v3.2"? What breaks if all three are pasted into the system prompt?
+6. What is the smallest evaluation you would ship with a support agent on Friday? What would you add after the first week of labels from the humans who took escalations?
+7. For a refund tool, when is the tool invisible, when is it callable, and when is a human required? What two facts go in the handoff packet?
+8. When is one-shot retrieve-and-generate enough, and what symptom tells you to add a router or a critic? Why is changing chunking, embedding, retriever, and prompt in one experiment a bad measurement?
+9. Why are research workers stateless? What happens if the planner answers a factual claim with no tool result? Name the four stop rules that still apply after the critic sends the planner back.
+10. A support bot and a research loop both need a retrieval tool. Which pieces are safe to share (a tool schema, a rubric), and which stay product-specific (persona fences, stop rules)?

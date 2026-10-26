@@ -1,766 +1,350 @@
 # 10. Cognitive agents
 
-Companion notes for **Chapter 10** of *AI Agents in Action* (2nd edition,
-Micheal Lanham; Manning, 2026).
+Companion notes for **Chapter 10** of *AI Agents in Action* (2nd edition, Micheal Lanham; Manning, 2026).
 
-You can stack reasoning primitives, a three-layer loop, and memory and
-still lack a craftsman: something that decides *which* instrument,
-*when* to put it down, and *whether* the work is even going well. This
-chapter is that missing piece — **cognition and metacognition as code**.
-Skip it and you will ship an agent that looks smart in a demo and then
-answers from a table of contents, retries the same search until the
-budget dies, or invents a procedure because retrieval came back empty.
+This chapter establishes cognition and metacognition as code. You can stack reasoning patterns, a loop, and memory and still lack a shop floor: something that picks a skill, watches the work, and reroutes when the work stalls. Afterward you can name the five failure modes, the workspace slots, the attention route, and the gates on confidence, stagnation, and coverage.
 
-## The mental model
+## 1. A shop floor for skills
 
-Reasoning patterns are skills. A cognitive architecture is a **shop floor**
-that picks a skill, watches the work, and reroutes when the work stalls.
+Reasoning patterns are skills. A cognitive architecture is the floor that picks a skill, watches the work, and changes skill when the work stalls.
 
 ```
   user query
        |
        v
-  +----------------------------------------------------------+
-  |                 COGNITIVE WORKSPACE                       |
-  |  task model · hypotheses · findings · confidence         |
-  |  history of tries · attention flags                      |
-  +----------------------------------------------------------+
-       ^         ^         ^         ^         ^         ^
-       |         |         |         |         |         |
-  PERCEIVE   REMEMBER   PLAN    EXECUTE   EVALUATE   ATTEND
-  (what is   (have we   (which   (do the   (is this   (who
-   this?)     seen it?)  skill?)  step)     working?)  next?)
+  COGNITIVE WORKSPACE
+  task · hypotheses · findings · confidence · history · flags
+       ^
+       |
+  PERCEIVE  REMEMBER  PLAN  EXECUTE  EVALUATE  ATTEND
 ```
 
-The one sentence to remember: **cognition is the quality of the agent's
-internal model of the task; metacognition is the quality of the agent's
-model of that model.** Architecture owns both. A bigger prompt owns
-neither.
+* **Cognition**: The quality of the agent's internal model of the task. What is being asked, what would count as done, what is still unknown.
+* **Metacognition**: The quality of the agent's model of that model. Confidence, progress, and the edge of what it knows. Architecture owns both. A longer prompt owns neither.
+* **Primitives stay**: Chain-of-thought, ReAct, tree-of-thought, and Reflexion remain useful. They are the tools on the bench. A factual lookup does not need a thought tree. An ambiguous, contradictory ticket should not be a single chain-of-thought pass. None of those patterns knows it is the wrong pattern.
+* **Run-time dispatch**: Perception estimates complexity and type. Planning picks a primitive. Evaluation can veto and force a different one. Attention grants the next module control. Choosing ReAct once in the constructor, and hoping every query fits, is the design-time habit this floor replaces.
+* **Inside the iteration, not instead of it**: An outer task loop still decides keep-going versus stop: goal, budget, hard cap. Attention decides which module runs right now. One outer iteration may contain several inner module steps.
+* **Name the failure, then the module**: A glossy miss is unjudged evidence, not a missing search. Groove lock is a missing progress signal. Another paragraph of "think carefully" installs neither. Chain-of-thought, ReAct, tree-of-thought, and Reflexion stay on the bench. The dispatcher is the new piece.
 
-Two consequences. First, CoT, ReAct, ToT, and Reflexion remain useful —
-they are the **primitives**. This chapter is the **dispatcher** that
-chooses among them. Second, the outer task loops still run. Cognition
-sits *inside* an iteration: the task loop still decides "keep going or
-stop"; attention decides "which module, right now."
+We are not arguing about machine consciousness. The target is observable behavior you can log, gate, and regress.
 
-## Cognition and metacognition as engineering
+## 2. Five failures you can tag
 
-Teams often treat "smarter" as "more patterns in the system prompt."
-Name a failure, map it to a missing *module*, then add that module.
-Do not add another paragraph of "think carefully."
+These are the default of an agent that can reason and cannot monitor the reasoning. Run ten diverse tickets through the current bot and tag the logs. A production incident you cannot tag this way is still a vibe.
 
-We are not arguing about machine consciousness. We are defining
-**observable, measurable behaviors** you can log, gate, and regress-test.
+1. **Glossy miss**: Retrieval returns a landing page, a README heading, or an API table of contents. The agent quotes it as the fix, with certainty. The search happened. The evidence was not judged. Evaluation that scores relevance, and refuses to treat metadata as content, is the patch. "Be thorough" does not add that score.
+2. **Groove lock**: The same query, the same tool, the same near-duplicate finding, until `max_iterations`. The deficit is progress sensing. Without a signal that this step did not move the workspace, the outer loop is a `while` with extra tokens.
+3. **Plan rigor mortis**: Perception classifies the ticket as timeouts. Planning commits to "raise timeouts." New evidence says the timeouts were already raised. The agent finishes the original checklist anyway. The deficit is permission to throw the plan away.
+4. **Coverage bluff**: Tools and memory both miss. Parametric knowledge fills the hole with a fluent procedure. The deficit is knowing the edge of coverage, and having an off-ramp that is a behavior, not the word "maybe" in a paragraph.
+5. **Tool salad**: The agent has search, a filesystem, and a calculator, and uses each once. It never runs them as a pipeline: search, open the file the search named, compute from the file. The deficit is dependency-aware composition. The tools were already there.
 
-### Five failure modes of capable-but-not-cognitive agents
+Each one is a module you can point at in a trace. Glossy miss and coverage bluff open evaluation. Groove lock opens attention plus evaluation. Rigor mortis opens planning plus attention. Tool salad opens planning plus execution. Print the field that module owns.
 
-These are the default of agents that can reason but cannot *monitor*
-reasoning. Run ten diverse tickets through your current bot and tag the
-logs. If you cannot tag them, you do not yet have this map.
+* **Glossy miss in the dump**: Relevance is high on a table-of-contents URL, and the quality note is empty. The agent quoted navigation as a procedure.
+* **Groove lock in the dump**: Execution history shows the same query and the same URLs. The outer counter is the only thing moving.
+* **Rigor mortis in the dump**: Active hypotheses still contain only "raise timeouts," and nothing is marked rejected after the user said that fix already shipped.
+* **Coverage bluff in the dump**: Confidence is high, average relevance is zero, and memory had no entity for this problem type. The fluent steps came from parametric memory.
+* **Tool salad in the dump**: The plan lists search, a file read, and a calculator, with no edge saying the read needs the path the search returned.
 
-```
-  observed mess          missing skill              module that owns it
-  ----------------       ----------------------     -------------------
-  glossy miss            evidence quality           evaluation
-  groove lock            progress sensing           attention + eval
-  plan rigor mortis      strategy revision          planning + attention
-  coverage bluff         knowledge-edge sensing     evaluation + memory
-  tool salad             compositional use          planning + execution
-```
+## 3. Cognition you can test
 
-**Glossy miss (confident wrong).** Retrieval returns a landing page, a
-README heading, or an API table of contents. The agent quotes it as the
-fix. The user hears certainty. The deficit is not "it didn't search." It
-searched and **did not judge the evidence**. Evaluation that scores
-relevance and refuses to treat metadata as content is the patch.
+Cognition here is how good the working model of the task is. A chain of thought can look poetic and still be the wrong model. A cognitive agent builds a representation, chooses an approach, and revises the representation when tools talk back.
 
-**Groove lock (broken record).** The same query, the same tool, the same
-near-duplicate finding, until `max_iterations`. The deficit is progress
-sensing. Without a signal that "this step did not move the workspace,"
-the outer loop is just a `while True` with extra tokens.
+1. **Novel decomposition**: Break a problem the prompt never templated into subtasks that map onto tools. Following a runbook is not this. It breaks when every ticket is forced through the same checklist.
+2. **Dependency reasoning**: B needs A's output. C can run beside A. A flat bullet list of steps, with no edges, is a wish. It breaks when parallel calls assume a file that search has not named yet.
+3. **Compositional tool use**: Combine tools in an order nobody enumerated. Search that returns a path, then a filesystem read of that path, then a computation on the file, is composition. Three unrelated calls are not.
+4. **Representation update**: When the observation contradicts the task model, change the model. "The user already tried the standard fix" demotes that fix from plan to ruled out. Skip this and the first three capabilities tour the wrong neighborhood with confidence.
 
-**Plan rigor mortis (rigid plan).** Perception classified the ticket as
-"timeouts"; planning committed to "raise timeouts"; new evidence says the
-timeouts were already raised. A non-cognitive agent finishes the original
-checklist anyway. The deficit is **permission to throw the plan away**.
+## 4. Metacognition you can gate
 
-**Coverage bluff (overcommitted guess).** Tools and memory both miss. The
-model's parametric knowledge fills the hole with a fluent procedure. The
-deficit is knowing the **edge of coverage** and having a structural off-ramp
-that is not the word "maybe" in a paragraph.
+Metacognition is thinking about that thinking in a way you can gate on. It is what makes cognition safe to run unattended. Three operational meanings.
 
-**Tool salad (shallow composition).** The agent has search, a filesystem,
-and a calculator, and uses each once, never as a pipeline (search → open
-the file the search named → compute from the file). The deficit is
-**dependency-aware composition**, not missing tools.
+1. **Confidence calibration**: Internal signals that predict correctness. Token likelihoods, retrieval scores, agreement across findings. The string "I'm not sure" is verbal uncertainty. Models can be prompted to say it about anything, and it correlates poorly with being wrong. Structural confidence on the workspace is what you gate execution on. Plot workspace confidence against later correctness. A calibrated agent sits near the diagonal. High confidence on wrong answers is the glossy miss in aggregate. Low confidence on easy wins is a boundary detector with an itch.
+2. **Stagnation detection**: After two hops, are the findings near-duplicates? Has confidence flatlined? A non-metacognitive agent waits for the iteration cap. A metacognitive one raises a signal and forces a strategy change inside the current outer iteration.
+3. **Knowledge-boundary awareness**: Distinguish "we have coverage," "we are on the edge," and "we are outside." Outside is not a prompt to try harder in the same store. It is a different behavior: say so, gather from a different source, or hand off. Without this distinction you have a capable intern and no manager: the work continues, fluently, past the point where the tools went empty.
 
-None of these is fixed by "be thorough." Each one is a **module you can
-point at in a trace**. If a production incident cannot be tagged this way,
-you are still debugging vibes.
+A test you can run this week for cognition: hand the agent a ticket whose standard fix the user already tried, and see whether the task model demotes that fix. A test for metacognition: plot workspace confidence against whether the answer was actually right. The sentence "I'm not sure" fails the second test even when the first representation was good.
 
-### From reasoning primitives to cognitive architecture
+## 5. Three design rules
 
-At design time you pick CoT, ReAct, a tree, Reflexion, or a
-sequential-thinking MCP server and hope every query fits. A factual
-lookup does not need a thought tree. An ambiguous, contradictory ticket
-should not be a single CoT pass. **None of those patterns know they are
-the wrong pattern.**
+The floor borrows three design rules from systems that already produce intelligent-looking behavior. It implements each rule as a component. It does not copy a human brain.
 
-```
-  design-time pick                  run-time dispatch (this chapter)
-  ----------------                  --------------------------------
-  you choose ReAct in the           perception estimates complexity
-  agent constructor and             and type; planning picks a
-  hope every query fits             primitive; evaluation can veto
-                                    and force a different primitive
-```
+1. **Society of specialists** (Minsky): Intelligence as a committee of narrow skills that compete and cooperate, not one prompt that does everything. The modules are perceive, remember, plan, execute, evaluate, attend. Product shapes that split personas — a flow, a hub, a team — are cousins. Here the specialists are faculties sharing one workspace, not personas arguing in a chat. Skip the specialists and you are back to one blob with a longer prompt.
+2. **A small shared stage** (Baars): Only a few items are on stage at once. Modules do not keep private side channels the others cannot see. If evaluation cannot read what execution just found, it cannot metacognize. The workspace is that stage, closer to a blackboard than to a chat log. Skip it and every module reasons from a different transcript.
+3. **Cheap recognition versus expensive deliberation** (Kahneman): Easy work should not pay for six modules. Hard, contradictory work should not skip evaluation to save latency. Attention is that depth router. It is an engineering policy. It is not a claim that the model "has System 1." Skip the router and either every ticket tours the full cycle, or every ticket takes the fast path.
 
-Think of the primitives chapter as teaching the agent to swing a hammer,
-a driver, and a saw. This chapter teaches it to **read the drawing** and
-put the hammer down when the job is a cut.
+Steal the separation of concerns. Leave the neuroscience. Build two of the three and the third hole is specific. Specialists plus a workspace, with no router, send every ticket through six modules or skip evaluation to save a hop. A workspace plus a router, with one blob instead of modules, has nothing narrow to route to. Modules plus a router, with no shared stage, let evaluation metacognize a transcript execution never wrote down.
 
-The architectural move is small to say and large to implement: primitives
-stay. A **workspace** plus an **attention policy** decide which primitive
-is in play, and whether it is earning its keep.
+## 6. The workspace
 
-### Defining cognition for agents
-
-Cognition here is **how good the agent's working model of the task is** —
-not how poetic the chain of thought looks.
-
-A cognitive agent does not "answer a query." It **builds a representation**
-(what is being asked, what would count as done, what is still unknown),
-**chooses an approach**, and **revises the representation** when tools
-talk back.
-
-Four capabilities you can actually test:
-
-1. **Novel decomposition.** Break a problem the prompt never templated
-   into subtasks that map onto tools. Following a runbook is not this.
-2. **Dependency reasoning.** Know that B needs A's output, and that C can
-   run beside A. A flat bullet list of "steps" with no edges is a wish.
-3. **Compositional tool use.** Combine tools in an order nobody enumerated.
-   Search that returns a path, then a filesystem read of that path, then a
-   computation on the file, is composition. Three unrelated calls are not.
-4. **Representation update.** When the observation contradicts the task
-   model, *change the model*. "The user already tried the standard fix"
-   must demote that fix from "plan" to "ruled out."
-
-Skip (4) and (1)–(3) still tour the wrong neighborhood with confidence.
-
-### Defining metacognition for agents
-
-If cognition is the quality of the thinking, metacognition is **thinking
-about that thinking** in a way you can gate on. Three operational meanings:
-
-**Confidence calibration.** Not the string "I'm not sure" — models can be
-prompted to say that about anything. Real calibration means **internal
-signals predict correctness**: token likelihoods, retrieval scores,
-agreement across findings. Verbal uncertainty is cheap and poorly
-correlated. Structural confidence on the workspace is what you gate
-execution on.
-
-**Stagnation detection.** After two hops, are the findings near-duplicates?
-Has confidence flatlined? A non-metacognitive agent hits the iteration
-cap. A metacognitive one **raises a signal** and forces a strategy change
-*inside* the current outer iteration.
-
-**Knowledge-boundary awareness.** Distinguish "we have coverage," "we are
-on the edge," and "we are outside." Outside is not a prompt to try harder
-in the same store. It is a different behavior: say so, gather more from a
-*different* source, or hand off.
-
-Metacognition is the layer that makes cognition **safe to run unattended**.
-Without it you have a capable intern with no manager.
-
-### Three theoretical foundations (high level)
-
-The architecture is not a copy of a human brain. It **borrows three design
-rules** from systems that already produce intelligent-looking behavior,
-then implements each rule as a software component.
-
-```
-  Minsky: many specialists,     -->  modules (perceive, plan, ...)
-  not one genius blob
-
-  Baars: a small shared stage   -->  cognitive workspace
-  that specialists read/write
-
-  Kahneman: cheap recognition    -->  attention routes "fast path"
-  vs expensive deliberation         vs full cycle by complexity
-```
-
-**Society of specialists.** Intelligence as a **committee of narrow
-skills** that compete and cooperate, not as one prompt that does
-everything. Multi-agent product shapes (flow, hub, team) are cousins.
-Here the "agents" are **cognitive faculties** sharing one workspace, not
-product personas arguing in Slack.
-
-**Shared workspace.** Only a few items are "on stage" at once. Modules do
-not whisper in private side channels that the others cannot see. If
-evaluation cannot read what execution just found, it cannot metacognize.
-The workspace is that stage — closer to a blackboard than to a chat log.
-
-**Dual process.** Easy work should not pay for six modules. Hard,
-contradictory work should not skip evaluation to save latency. Attention
-is that **depth router** — an engineering policy, not a claim the model
-"has System 1." Steal the separation of concerns, not the neuroscience.
-
-## Mapping the mind
-
-Now the shop floor. Seven pieces: a workspace, five cycle modules, and
-memory as the long-lived graph those modules consult and update.
-
-### Architecture overview
-
-```
-                    +-------- attention (router) --------+
-                    |  fast path | full cycle | interrupt |
-                    +-------------------------------------+
-                                      |
-        perceive --> [maybe memory] --> plan --> execute --> evaluate
-                                      |
-                                      v
-                               present / replan /
-                               gather / escalate
-```
-
-Around a **structured workspace** (not a transcript), each slot has a job:
+Seven pieces: one workspace, five cycle modules, and memory as the long-lived graph they consult. Around a structured workspace, not a transcript, each slot has a job.
 
 | Slot | What it holds |
 |---|---|
 | Task representation | Type, entities, ambiguities, complexity |
 | Active hypotheses | Candidate strategies, including rejected ones |
-| Intermediate results | Findings with source, relevance, quality notes |
+| Intermediate results | Findings with source, relevance, and a quality note |
 | Confidence state | Current value plus a short trend |
 | Execution history | What was tried, in order |
 | Attention signals | Flags that break the default cycle |
 
-Perception writes the task model. Planning writes a strategy. Execution
-writes findings. Evaluation writes confidence and signals. Attention
-**reads signals and chooses the next writer**. Memory reads and writes a
-graph that outlives the cycle.
+* **Who writes**: Perception writes the task model. Planning writes a strategy. Execution writes findings. Evaluation writes confidence and signals. Attention reads the signals and chooses the next writer. Memory reads and writes a graph that outlives the cycle.
+* **A pipeline that can interrupt itself**: Default order is perceive, plan, execute, evaluate. Signals break that order. This is not "one agent with more tools." The outer task loop still owns iteration and exit. This floor owns the quality of processing inside an iteration.
+* **Sibling of research state**: A research loop accumulates findings. The workspace also accumulates self-assessment: confidence, contradictions among findings, whether the current strategy is earning progress, which attention flag is live.
 
-This is a **pipeline that can interrupt itself**, not "one agent with more
-tools." The outer task loop still owns iteration and exit; this
-architecture owns **quality of processing inside an iteration**.
+The workspace is not conversation history, not leftover tokens, and not the findings alone. Typical fields, whatever you name them:
 
-### The cognitive workspace
+* **Task type**: Simple lookup, multi-step, contradictory, ambiguous, or compositional. Perception's first job is to pick one honestly.
+* **Strategy type**: The primitive or plan family in play. Direct retrieve, a ReAct-style hop, hypothesis test, explore-then-plan.
+* **Attention signal**: `NONE`, stagnation, contradiction, low confidence, or knowledge gap. The default cycle runs only when the signal is `NONE`.
+* **Finding**: Content, source, relevance score, quality note. Raw tool JSON is not a finding until it is annotated.
+* **History**: Enough of the last N steps to see overlap and to see "we already ruled this out."
 
-The workspace is the beating shared object. Every module reads it. Every
-module writes a **typed slice**. It is not conversation history, not a
-scratchpad of leftover tokens, and not research findings alone — though
-if you already built accumulating state for a research loop, this will
-feel like a sibling that also tracks *how the reasoning is going*.
+Hidden state in prompt prose ("remember we tried X") gets dropped, drowned, or hallucinated back. If a later module must act on it, it is a field. If you cannot explain the next route from a dump of the workspace, the architecture is theater.
 
-Research state accumulated **findings**. The cognitive workspace also
-accumulates **self-assessment**: confidence, contradictions among
-findings, whether the current strategy is earning progress, which
-attention flag is live.
+Read a bad run in slot order, before you reread the prompt.
 
-Typical typed pieces (names are yours; the *slots* are the point):
+* **Task representation**: What perception thought this was. A wrong type explains a wrong menu.
+* **Active hypotheses**: Whether the failed strategy is still the plan. Rigor mortis sits here when nothing is marked rejected.
+* **Intermediate results**: Whether each finding has a source and a quality note. A glossy miss is a heading with high relevance and an empty note.
+* **Confidence state**: The level and the trend. A gate that reads only the latest number misses a decline across hops.
+* **Execution history**: The last N steps. Groove lock is the same query copied down the list.
+* **Attention signals**: Who should write next. An empty flag means the route was never given a reason to break the default cycle.
 
-- **Task type** — simple lookup, multi-step, contradictory, ambiguous,
-  compositional. Perception's first job is to pick one honestly.
-- **Strategy type** — the primitive or plan family in play (direct
-  retrieve, ReAct-style hop, hypothesis test, explore-then-plan).
-- **Attention signal** — `NONE`, stagnation, contradiction, low
-  confidence, knowledge gap. Default cycle only when `NONE`.
-- **Finding** — content, source, relevance score, quality note. Raw tool
-  JSON is not a finding until it is annotated.
-- **History** — enough of the last N steps to detect overlap and
-  "we already ruled this out."
+## 7. Perception and planning
 
-Hidden state in prompt prose ("remember we tried X") will be dropped,
-drowned, or hallucinated back. If a later module must act on it, it is a
-**field**. Treat the workspace as boring and printable. If you cannot
-explain the next route from a dump, the architecture is theater.
+Perception is first contact. It turns a raw utterance into a task model before anyone calls a tool. Classify the problem, pull entities, list ambiguities, estimate complexity. The complexity number is the dual-process switch.
 
-### Perception
+* **Fast path**: Low complexity, under about 0.3, plus a memory hit. Attention may skip plan and evaluate and go to a cheap execute, or to a direct reply. You pay for that skip when you score a hard ticket as easy. A contradictory webhook ticket filed as 0.2 because the word "timeout" looked familiar is the misfire. Log the score and the type together.
+* **Full cycle**: High complexity, over about 0.7. Usually a memory consult before planning, so past scars inform the first strategy. The band between 0.3 and 0.7 is where you decide with the type, not with a default of 0.5.
 
-Perception is first contact. It turns a raw utterance into a **task
-model** before anyone calls a tool.
+Task types worth logging, because the route depends on the name:
 
-That is more than parse. Classify the problem, pull entities, list
-ambiguities, **estimate complexity**. The complexity number is not
-decoration. It is the dual-process switch:
+1. **Simple lookup**: One fact, one likely source. A fast path is honest. It breaks when the "one fact" is a contradiction the user already described.
+2. **Multi-step**: A sequence with dependencies. Plan the edges. It breaks when you flatten the sequence into parallel calls.
+3. **Contradictory**: The user already named a fix that failed, or two sources will disagree. Hypothesis-test, not the popular runbook. It breaks when perception files it as a lookup because "timeout" was in the text.
+4. **Ambiguous**: A slot you must not guess. Which environment. Which customer. Clarify or explore before you commit. It breaks when the model fills the slot from the most common tenant.
+5. **Compositional**: Tools in combination, not in parallel isolation. It breaks into tool salad when each tool is called once and nobody names an order.
 
-- Low complexity (say, under ~0.3) plus a memory hit → attention may
-  **skip** plan/evaluate and go to a cheap execute or even a direct
-  reply. That is the fast path. You pay for it when you mis-score a
-  hard ticket as easy.
-- High complexity (say, over ~0.7) → full cycle, and usually a **memory
-  consult before planning**, so past scars inform the first strategy.
+If perception always emits `multi_step` at 0.5, you have a default, not a module. Calibrate it on a handful of tickets whose type you already know.
 
-Task types that earn their keep in logs:
-
-- **Simple lookup** — one fact, one likely source.
-- **Multi-step** — a sequence with dependencies.
-- **Contradictory** — the user already named a fix that failed, or two
-  sources will disagree.
-- **Ambiguous** — missing a slot you must not guess (which env? which
-  customer?).
-- **Compositional** — will need tools in combination, not in parallel
-  isolation.
-
-If perception always emits `multi_step` at 0.5, you have a default, not a
-module. Calibrate it on a handful of tickets you already know.
-
-### Planning
-
-Planning reads the task model and **selects a strategy**, optionally
-colored by memory. This is where the architecture stops being "an agent
-that always ReActs."
+Planning reads that task model and selects a strategy, optionally colored by memory. This is where the floor stops being an agent that always ReActs.
 
 ```
-  type + complexity + memory hits
-            |
-            v
-     +------+------+
-     | lookup, low | --> direct retrieve / one tool
-     | ambiguous   | --> clarify or explore before commit
-     | contradict  | --> hypothesis test (the failed fix is a negative)
-     | compose     | --> explicit dependency graph of tools
-     | hard + novel| --> heavier primitive (tree, sequential thinking)
-     +-------------+
+  lookup, low complexity --> direct retrieve, or one tool
+  ambiguous               --> clarify, or explore, before you commit
+  contradictory           --> hypothesis test; the failed fix is a negative
+  compositional           --> an explicit dependency graph of tools
+  hard and novel          --> a heavier primitive (a tree, sequential thinking)
 ```
 
-A standard agent has one approach: receive, maybe tool, reply. A planning
-module has a **menu** and a reason to pick. Hypothesis-test is the
-clearest example: it should fire when perception marked **contradiction**,
-not because you like the name.
+* **A menu, and a reason**: Hypothesis-test fires because perception marked contradiction, not because the name is attractive.
+* **Memory changes the menu**: If the graph already knows this class of incident was connection-pool exhaustion last quarter, the first plan is not "increase timeouts" again. Planning read an observation attached to a problem-type entity.
+* **Rejected strategies are fields**: Write them down. Otherwise the next plan rediscovers the failure you just paid for.
 
-Memory changes the menu. If the graph already knows "this class of
-incident was connection-pool exhaustion last quarter," the first plan
-should not be "increase timeouts" again. That is not magic. It is
-**planning that reads observations attached to a problem-type entity**.
+## 8. Execution and evaluation
 
-Write rejected strategies into the workspace. Otherwise the next plan
-will rediscover the failure you just paid for.
+Execution takes the current plan step, calls tools (function tools or MCP), and writes annotated findings. If you have shipped ReAct, the call-and-observe rhythm is familiar. The difference is where the result goes.
 
-### Execution
+* **Findings, not a user reply**: Content, source, relevance, quality note land on the workspace. A raw blob with no scores forces evaluation to guess. That is how a glossy miss sneaks through.
+* **Keep the executor thin**: Planning and evaluation do not hide inside it "to save a hop." You would lose the ability to interrupt.
+* **Two kinds of MCP**: Domain hands — filesystem, search, internal APIs — belong on execution. The memory server is a different process. One tool description that both "searches the repo" and "remembers pool exhaustion" rots the schema.
+* **Interrupt requires a seam**: Hide planning inside the executor and a contradiction found mid-call has nowhere to go except the final paragraph. The user sees the runbook. Any flag is written after the reply. Keep the executor on one plan step, then let evaluation write, then let attention choose.
 
-Execution is the simplest module, and the one people over-train because it
-looks like "the agent." It takes the **current plan step**, calls tools
-(function tools or MCP), and writes **annotated findings** back.
+Evaluation is the metacognitive core. It does not find facts and it does not execute the plan. After each execution step it asks whether this advanced the task, whether findings agree, and whether confidence moved. Then it recommends continue, replan, gather more, or escalate and present with uncertainty.
 
-If you have shipped ReAct, the call/observe rhythm is familiar. The
-difference is **context and wrapping**. Results do not go straight to the
-user. They go to the workspace as findings: content, source, relevance,
-quality note. Evaluation reads those fields. A raw blob with no scores
-forces evaluation to guess, which is how glossy misses sneak through.
+* **Progress**: Moved, stalled, or reversed. Stalled plus a high relevance score on a navigation page is still stalled. The page was about the topic. It was not the fix.
+* **Consistency**: A boolean plus the conflicting pair. "Timeouts" versus "the payload field" is the pair. A single blended sentence deletes it.
+* **Confidence delta**: Up, down, or flat. The trend matters as much as the level. Three flat hops are a plateau even if the absolute number looks acceptable.
+* **Recommendation**: Continue, replan, gather more, or escalate and present with uncertainty. This is the field attention reads. A recommendation that lives only inside a paragraph never becomes a route.
+* **Three failures die here if you let them**: Evidence-quality scoring catches the glossy miss. Overlap checks catch groove lock. A contradiction flag catches rigor mortis, once attention routes back to planning. Coverage bluff dies here only if low relevance is allowed to pull confidence down. A cheerful confidence write on empty retrieval keeps the bluff alive.
 
-Keep execution **thin**. Do not hide planning or evaluation inside the
-executor "to save a hop." You will lose the ability to interrupt.
+This is cousin to an offline judge and a grounding score. It runs in the loop, on the workspace, every hop, not only as a score after the user saw the answer. Offline eval tells you the system is regressing. This module is how this run refuses to lie.
 
-MCP belongs here as **hands**: filesystem, search, internal APIs. Memory
-MCP is a different server (below). Mixing "search the repo" and "remember
-that pool exhaustion" in one tool description is how schemas rot.
+## 9. Attention grants the next module
 
-### Evaluation
-
-Evaluation is the **metacognitive core**. It does not find facts. It does
-not execute the plan. After each execution step it asks: did this advance
-the task? Are findings consistent? Is confidence moving? Continue, replan,
-or stop?
-
-Three of the five failure modes die here if you let them:
-
-- Evidence-quality assessment → glossy miss
-- Stagnation / overlap checks → groove lock
-- Contradiction flags → plan rigor mortis (when paired with attention
-  routing back to planning)
-
-Typical structured output (again, names are local):
-
-- Progress assessment (moved / stalled / reversed)
-- Consistency check (bool plus the conflicting pair)
-- Confidence delta (up, down, flat)
-- Recommendation: continue, replan, gather more, escalate / present with
-  uncertainty
-
-This is cousin to offline judges and grounding scores — **in the loop**,
-on the workspace, every hop, not only a Phoenix score after the user
-already saw the answer. Use both. Offline eval is how you know the
-*system* is regressing. This module is how *this run* refuses to lie.
-
-### Attention
-
-Attention is what makes this a **cognitive architecture** rather than a
-fixed multi-agent pipeline. It reads signals and **grants the next
-module control**. Default order is perceive → plan → execute → evaluate.
-Signals break that order.
+Attention is what makes the floor an architecture rather than a fixed pipeline. It reads signals and grants the next module control. Default order is perceive, then plan, then execute, then evaluate. Signals break that order.
 
 ```
-  if complexity low AND memory hit:
-       fast path --> execute or reply
-  elif signal == CONTRADICTION:
-       planning (new strategy; old one is in history)
-  elif signal == STAGNATION:
-       planning with "do not repeat" constraint
-  elif signal == KNOWLEDGE_GAP:
-       memory (broader) then maybe planning for exploratory goals
-  elif signal == LOW_CONFIDENCE:
-       execute (different source) or gate (do not present)
-  else:
-       next step in the default cycle
+  complexity low AND memory hit     --> fast path: execute or reply
+  signal == CONTRADICTION           --> planning (old strategy stays in history)
+  signal == STAGNATION              --> planning, with "do not repeat"
+  signal == KNOWLEDGE_GAP           --> broader memory, then maybe exploratory goals
+  signal == LOW_CONFIDENCE          --> a different source, or do not present
+  else                              --> next step of the default cycle
 ```
 
-The fast path is the dual-process win: familiar, cheap tickets should not
-tour every module. In production that is latency and tokens. The failure
-mode is **mis-routing a contradictory ticket onto the fast path**. Log
-every fast-path decision. Sample them in your eval set.
+* **The fast path is the latency win**: Familiar, cheap tickets should not tour every module. Log every fast-path decision. Sample them in the eval set. The failure is a contradictory ticket routed onto that path.
+* **Where to debug**: Start in this decision and in the workspace flags. Wrong flags mean perception or evaluation is lying. Right flags and a wrong route mean attention is the bug. "Why did it paste the runbook?" is an attention question once evaluation has already written `CONTRADICTION`. If that flag is absent, evaluation never saw the conflict, and the route was never given a chance.
 
-When debugging "why did it do that?", do not start in the LLM. Start in
-this decision tree and the workspace flags. If the flags are wrong,
-perception or evaluation is lying. If the flags are right and the route
-is wrong, attention is the bug.
+## 10. A graph of experience
 
-### Memory module and the MCP memory server
+Memory is the seventh piece. It is persistent structure, not the session transcript. The official MCP memory server (`@modelcontextprotocol/server-memory`) is a local knowledge graph: entities, directed relations in the active voice, and observations hanging off entities. This pattern does not need an extra vector database. It persists as local JSON. Here the graph is the agent's institutional scar tissue.
 
-Memory is the seventh piece: **persistent long-term structure**, not the
-session transcript. The book wires this through the official MCP memory
-server (`@modelcontextprotocol/server-memory`): a **local knowledge graph**
-with entities, directed relations (active voice), and observations hanging
-off entities. No extra vector DB required for this pattern; it persists as
-local JSON. Here it is the agent's **institutional scar tissue**.
-
-Map the graph onto how the architecture thinks:
-
-- Problem types → **entities**
-- Strategies that worked or failed → **observations** on those entities
-- "X co-occurs with Y" / "tool combo Z" → **relations**
-
-Over time this is not a chat dump. It is a **model of experience**.
-
-The memory *module* is not "call the server when the prompt says so." It
-is a **proactive cognitive layer** around those tools:
-
-1. **Retrieve before planning** on hard or familiar-looking work, so the
-   first strategy is not naive.
-2. **Write after evaluation**, not after every noisy hop — store
-   strategies and outcomes, not every tool blob.
-3. **Broaden on knowledge-gap signals** before you declare outside
-   coverage.
-
-Org-wide session stores and document indexes are a different job. This
-graph is **the agent's learned problem-solving memory**. Those services
-are **how the organization keeps transcripts and documents alive**. Same
-word, different job.
-
-## Building and running
-
-Pieces in hand. Assemble a loop, run a ticket a flat ReAct agent will
-flub, then add the metacognitive gates that make the architecture worth
-its hops.
-
-### The cognitive loop
-
-Layer this inside an outer task loop:
+* **Problem types** are entities.
+* **Strategies that worked or failed** are observations on those entities.
+* **"X co-occurs with Y" and "tool combo Z"** are relations. Write the relation in the active voice ("VAT-inclusive carts co-occur with this webhook failure"), so a later retrieval reads like a fact a planner can use.
 
 ```
-  outer task loop   keep going / stop (goal, budget, hard cap)
+  entity: "VAT-inclusive webhook"
+    observation: timeout increase already failed
+    observation: candidate, unconfirmed — amount field vs exclusive field
+  relation: co-occurs with "VAT-inclusive carts, two EU countries"
+```
+
+Over time this is a model of experience, not a chat dump. Write the observation evaluation actually supported. On this ticket that is "the timeout fix already failed," not a finished theory of the tax field. The next session can retrieve that scar before anyone plans "increase timeouts" again. A chat log of the session would not hand planning that fact. You would reread it and hope the model notices. The memory module is a proactive layer around those tools, not a call you hope the prompt remembers.
+
+1. **Retrieve before planning** on hard work, or on a problem type that looks familiar. The first strategy should be allowed to see last quarter's scar. Skip this and every incident starts naive, including the ones you have already paid to understand. Connection-pool exhaustion retrieved as an observation is how "increase timeouts" loses the menu.
+2. **Write after evaluation**, not after every noisy hop. Store the strategy and the outcome once they have been judged. A write after every hop stores tool noise as gospel. The next session retrieves the noise and repeats it.
+3. **Broaden on a knowledge-gap signal** before you declare the topic outside coverage. A wider slice of the graph, or a second store, comes first. Declaring "outside" on the first empty lookup is how the boundary detector flags easy questions.
+
+An organization-wide session store and a document index do a different job. They keep transcripts and documents alive. This graph is the agent's learned problem-solving memory. Same word. Different write path.
+
+## 11. Several modules inside one outer iteration
+
+Layer the cognitive cycle inside an outer task loop. The outer loop still owns the macro decision: keep going or stop, under a goal check, a budget, and a hard cap. The cycle owns the micro decision: what to do next inside this iteration.
+
+```
+  outer task loop          keep going / stop
         |
         |  each iteration
         v
   attention  <---- workspace signals
         |
         v
-  inner cycle      perceive / remember / plan / execute / evaluate
-                   (may run several times in ONE outer iteration)
+  perceive / remember / plan / execute / evaluate
+  (evaluation may raise a signal and attention may
+   run another module before the outer loop resumes)
 ```
 
-The outer loop still owns **macro** iteration, convergence, and exit. The
-cognitive cycle owns **micro** "what to do next *inside* this iteration."
-Attention sits on the boundary: evaluation raises a signal; attention
-spends it on another module **without** returning to the outer loop yet.
-Only a clean step (no live signal) hands control back for a convergence
-check.
+* **Spend the signal inside the iteration**: Evaluation raises it. Attention routes to another module without returning to the outer loop yet. Only a clean step, with no live signal, hands control back for the convergence check.
+* **One billed outer iteration can contain a pivot**: Perceive, plan, execute, evaluate, replan, execute again. You are paying so a shallow hop does not end as a glossy miss.
+* **Termination still layers**: Hard cap, budget, goal, quality. Stagnation here is richer than an overlap test that only kills the run. It can fire inside the iteration and cause a pivot.
+* **Two MCP servers in a working composition**: The memory server for the graph, and domain hands for the ticket (filesystem, search, internal APIs). Initialize an empty workspace, run a real query, and name each span as a module. If you cannot tell perception from evaluation in the trace, you assembled a blob.
+* **Boring constructors**: One typed module each, one workspace, attention as control flow. Node and `npx` launch the servers. Python holds the agent and the keys. Clever recursion without a printed workspace is a deadlock with extra tokens.
+* **What one outer iteration is allowed to cost**: Perceive, remember, plan, execute, evaluate, then a replan and a second execute, before the outer loop checks the budget again. That is the bill for refusing a glossy miss. It is not permission to hide an unbounded search inside "one" iteration. The outer hard cap and the dollar budget still wrap the whole thing. Name the spans `perceive`, `plan`, `execute`, `evaluate`, `attention`, so a pivot is visible without reading the prompt.
 
-That means one billed outer iteration can contain: perceive, plan,
-execute, evaluate, replan, execute again. You are not paying for
-architecture cosplay. You are paying to **not** emit a glossy miss at the
-end of a shallow hop.
+## 12. A ticket a flat loop gets plausibly wrong
 
-Termination still layers (hard cap, budget, goal, quality). Stagnation
-here is **richer**: it can fire *inside* the iteration and cause a pivot
-rather than only killing the whole run.
+Need a query a flat ReAct agent gets wrong in a way that sounds helpful.
 
-### A complete cognitive agent with MCP
+> Checkout conversion dropped about 18% after we "fixed" the payment webhook. On-call already doubled retries and lengthened timeouts. It still fails, and only for VAT-inclusive carts in two EU countries.
 
-A working composition typically attaches **two** MCP servers:
+A standard agent searches "payment webhook timeout conversion," finds the runbook already followed, and pastes it. The user said that path is dead. The answer is wrong by construction. A cycle that earns the extra modules looks like this.
 
-- Memory server — the graph (experience)
-- Domain hands — often filesystem, plus whatever your ticket actually
-  needs (search, internal APIs)
+1. **Perception**: Type is contradictory, because the standard fix was already applied. Complexity is high, the kind of score that refuses the fast path. Entities: webhook, retries, VAT-inclusive, country codes. Ambiguity stays open: "fails" might mean a decline or a client-side abort. Do not collapse that yet. Signal is still `NONE`.
+2. **Memory first**: Attention sees high complexity and consults the graph before planning. The graph may already know "VAT-inclusive + webhook" from a prior incident, such as a tax-inclusive amount versus the processor's exclusive field. A miss is itself information: coverage is weak, and the first plan should not pretend otherwise.
+3. **Planning**: The menu must not offer "increase timeout" as if it were new. Hypothesis-test. The failed fix is a negative constraint, written into rejected strategies. The candidate is payload shape or a tax field, not transport.
+4. **Execution**: Search, and open the webhook payload schema, and compare a failing cart to a succeeding one. That order is composition: the schema read depends on what the search named. Findings are annotated. The runbook scores high relevance for "timeouts," with a quality note that the user already applied it. The schema finding scores high relevance for VAT. Raw JSON does not enter the workspace without those notes.
+5. **Evaluation**: Findings contradict the popular answer. Confidence in "timeouts" drops. Confidence in "amount field" rises only as far as the evidence goes. Progress on the timeout hypothesis is reversed. Signal: `CONTRADICTION`.
+6. **Attention**: Routes back to planning, not to the user. The new plan confirms with a second source, a recent deploy diff or the tax config. Still no present. This second plan is inside the same outer iteration. The outer loop has not been asked to stop.
+7. **Gate**: Present only when confidence and the contradiction policy allow. If you are still on the edge, say so and show sources. Sounding sure is the glossy miss this cycle was built to refuse.
 
-Initialize an empty workspace, drop in a real query, run the loop. Then
-open the SDK trace (OpenAI dashboard or whatever you wired) and **name
-each span as a module**. If you cannot tell perception from evaluation in
-the trace, you assembled a blob.
+The win is refusing the runbook because the workspace recorded that it had already failed. There is no VAT oracle hiding in the prompt.
 
-Node/`npx` launches those servers; Python holds the agent and keys. This
-chapter assumes those sockets work so it can talk about **routing**, not
-about STDIO.
+## 13. Three gates on structured state
 
-Keep constructors boring: one typed module each, one workspace, attention
-as control flow. Clever recursion without a printed workspace is a
-distributed deadlock with extra tokens.
+Ship confidence gating first. Before anything user-visible, inspect workspace confidence, the number evaluation has been updating.
 
-### Walkthrough: one cycle that earns the complexity
+* **Below a hard floor (example: 0.3)**: Do not present. Signal uncertainty or escalate. Gathering more on a collapsed confidence often throws tokens at a knowledge boundary.
+* **Between the floor and a soft bar (example: 0.6)**: Gather more if iteration budget remains. Otherwise uncertainty, not a fluent guess.
+* **A live `CONTRADICTION`**: Gather or replan, even when the number looks acceptable. An average hides a fight.
+* **A declining trend across hops**: A red flag. More of the same strategy is not the remedy.
 
-Need a query a flat ReAct agent gets **wrong in a plausible way**.
+This is a gate on structured state. "I think…" in the output is not a gate. You can unit-test it without a model: feed workspaces, assert the decision. Pair it with grounding when the answer must cite retrieved text. The gate answers "are we allowed to speak?" Grounding answers "did we speak only from sources?"
 
-> Checkout conversion dropped about 18% after we "fixed" the payment
-> webhook. On-call already doubled retries and lengthened timeouts. It
-> still fails, and only for VAT-inclusive carts in two EU countries.
+Three workspaces, three decisions, using the example thresholds:
 
-A standard agent searches "payment webhook timeout conversion," finds the
-runbook you already followed, and pastes it. The user told you that path
-is dead. The answer is wrong **by construction**.
+* **Confidence 0.2**: Under the 0.3 floor. Do not present. Escalate or say you do not know. Another search on a collapsed score usually spends tokens at a boundary.
+* **Confidence 0.45, budget left**: Between the floor and the 0.6 bar. Gather more. If the budget is already spent, uncertainty, not a fluent guess.
+* **Confidence 0.8 with `CONTRADICTION` still open**: The number looks presentable. The signal overrides it. Gather or replan. An average of "timeouts" and "tax field" is how a fight becomes a smooth wrong answer.
 
-A cognitive cycle that deserves the extra modules:
+Stagnation is an overlap and plateau problem. Groove lock lives here.
 
-1. **Perception.** Type: contradictory (standard fix already applied).
-   Complexity high. Entities: webhook, retries, VAT-inclusive, country
-   codes. Ambiguity noted: "fails" might mean decline vs client-side
-   abort — do not collapse it yet. Signal still `NONE`.
+* **Content overlap**: Token-set Jaccard, or a cheaper overlap ratio, between the last two findings. High overlap means you did not move. Identical queries in the history are the same fact, cheaper to see.
+* **Confidence plateau**: The last few confidence values sit in a tiny band. The agent is busy and unchanged. A flat 0.62 across three hops is a plateau, not a mild success.
+* **On fire**: Set `STAGNATION`. Record why, overlap versus plateau. Route to planning with an explicit constraint: do not repeat the failed strategy. Write the failure into memory so the next session does not buy the same groove. Planning must receive that constraint. A flag nobody reads is a metric.
+* **The outer cap stays**: Stagnation spends fewer of those iterations on the same wall. It does not replace the hard limit. A pivot every hop, with no overlap test, is thrashing under a new name.
 
-2. **Memory first** (attention sees high complexity). Graph may already
-   know "VAT-inclusive + webhook" from a prior incident (tax-inclusive
-   amount vs processor's exclusive field). If not, that miss is itself
-   information (weak coverage).
+Coverage is the bluff patch: know when you are outside. Blend a few cheap signals rather than one magic score. Average relevance of findings, or 0 when there are none. Whether memory had hits for this problem type. Current workspace confidence. Map the blend onto within, edge, or outside. Outside raises `LOW_CONFIDENCE`, or a dedicated gap flag, and changes behavior.
 
-3. **Planning.** Not "increase timeout." Hypothesis-test: the failed fix
-   is a **negative constraint**. Candidate: payload shape / tax field
-   mismatch, not transport.
+1. **Within**: The normal present path, still gated.
+2. **Edge**: Present with sources and explicit limits, or one more gather from a different class of tool.
+3. **Outside**: Say the store and the graph do not cover this. Ask a clarifying question, or escalate. Do not complete the procedure from parametric memory while wearing a source-shaped hat.
 
-4. **Execution.** Search *and* open the webhook payload schema *and*
-   compare a failing cart to a succeeding one. Findings are annotated:
-   runbook relevance high for "timeouts," quality note "user already
-   applied"; schema finding relevance high for VAT.
+False positives, flagging an easy question as outside, annoy users. False negatives, a fluent procedure on empty retrieval, create incidents. Measure the pair. That pair is the knowledge-boundary accuracy number below.
 
-5. **Evaluation.** Findings contradict the first popular answer.
-   Confidence in "timeouts" drops. Confidence in "amount field" rises
-   only as far as the evidence goes. Signal: `CONTRADICTION` (popular
-   runbook vs payload evidence).
+### Watch for
 
-6. **Attention.** Routes back to planning, not to the user. New plan:
-   confirm with a second source (recent deploy diff, tax config), still
-   no present.
+* A new strategy every hop, with no overlap test. That is thrashing.
+* `STAGNATION` written and the same query issued again. Detection without a pivot waits for `max_iterations`.
+* A sourced-looking procedure whose findings have relevance 0. Parametric memory is wearing a citation.
 
-7. **Gate.** Only present when confidence and contradiction policy
-   allow. If still on the edge, say so and show sources — do not "sound
-   sure."
+## 14. Behaviors that fall out of the routing
 
-The win is **refusing the runbook because the workspace recorded that it
-had already failed**, not a magic VAT oracle.
+Four behaviors you should not special-case as extra `if` statements, if the modules and the graph are doing their jobs. They show up from interaction. That is the society-of-specialists bet.
 
-### Confidence-gated execution
+1. **Curiosity**: Low confidence plus no memory hits raises a knowledge-gap signal. Memory broadens. If it is still empty, planning adds exploratory subgoals the user did not name: adjacent config, the last deploy, a second store. From the outside it looks like the agent wondered. Inside it is a flag and a route.
+2. **Adaptive persistence**: Execution fails. Stagnation fires. Attention sends planning a "do not repeat" constraint. Memory records the miss. Next time that problem type appears, planning starts somewhere else. That is learning from failure without a training job.
+3. **Selective depth**: Fast path on easy and familiar. Full cycle on contradictory and novel. The same binary, a different token bill. If everything takes the full cycle, attention is shy. If everything takes the fast path, attention is lying.
+4. **Composition under constraints**: Evaluation refuses a shallow one-tool answer on a compositional type. Planning is forced to name a dependency order. Execution runs that order. You did not hard-code "always search, then open, then compute." You made a shallow answer fail a check.
 
-The simplest metacognitive pattern, and the one you should ship first.
+If they do not show up, do not add a curiosity prompt. Inspect three things. Did evaluation raise the signal? Did attention take the route that signal names? Did memory actually write an outcome after evaluation, or is the graph still empty after dozens of tickets? A prompt that says "be curious" imitates the behavior and leaves those three questions unanswerable.
 
-Before anything user-visible, **inspect workspace confidence** (the
-number evaluation has been updating), not the model's manners.
+## 15. Probes and four numbers
 
-A workable policy, as control flow not as poetry:
+Not a leaderboard. A diagnostic on your agent, aimed at the same five messes. Steal the probes. Write them as fixtures. The test is the requirement.
 
-- Below a hard floor (example: 0.3) → **do not present**. Signal
-  uncertainty or escalate. Gathering more on a collapsed confidence is
-  often throwing tokens at a knowledge boundary.
-- Between floor and a soft bar (example: 0.6) → **gather more** if you
-  still have iteration budget; otherwise uncertainty, not a fluent
-  guess.
-- Live `CONTRADICTION` signal → gather / replan, even if the number
-  looks "ok." Averages hide fights.
-- A **declining** confidence trend across several hops → red flag. More
-  of the same strategy is not medicine.
-
-This is a **gate on structured state**. "I think…" in the output text is
-not a gate. You can unit-test the gate without calling a model: feed
-workspaces, assert decisions.
-
-Pair this with grounding checks when the answer must cite retrieved text.
-The gate answers "are we allowed to speak?" Grounding answers "did we
-speak only from sources?"
-
-### Stagnation detection and strategy pivot
-
-Groove lock is an **overlap and plateau** problem.
-
-Detectors that stay honest:
-
-- **Content overlap** between the last two findings (token-set Jaccard
-  or a cheaper overlap ratio). High overlap → you did not move.
-- **Confidence plateau** — last few confidence values sit in a tiny
-  band. The agent is busy and unchanged.
-
-On fire: set `STAGNATION`, record *why* (overlap vs plateau), route to
-planning with an explicit constraint: **do not repeat the failed
-strategy**. Write the failure into memory so the next *session* does not
-buy the same groove.
-
-Pivot without detection is thrashing (new strategy every hop). Detection
-without pivot is a metric you ignore until `max_iterations`. You need
-both.
-
-Cap outer iterations anyway (hard limit). Stagnation is how you spend
-fewer of those iterations on the same brick wall.
-
-### Knowledge boundary awareness
-
-This is the coverage-bluff patch: **know when you are outside**.
-
-Blend a few cheap signals rather than one magic score:
-
-- Average relevance of findings (or 0 if there are none)
-- Whether memory had hits for this problem type
-- Current workspace confidence
-
-Map the blend onto **within / edge / outside**. Outside should raise
-`LOW_CONFIDENCE` (or a dedicated gap flag) and change behavior:
-
-- **Within** — normal present path, still gated.
-- **Edge** — present with sources and explicit limits, or one more
-  gather from a *different* class of tool.
-- **Outside** — graceful degradation: say the store and graph do not
-  cover this; ask a clarifying question; escalate. Do not complete the
-  procedure from parametric memory while wearing a source-shaped hat.
-
-False positives (flagging easy questions as outside) annoy users. False
-negatives (fluent hallucination on empty retrieval) create incidents.
-Measure both. That pair *is* the metric later in this chapter.
-
-### Emergent behaviors
-
-Four behaviors you should not special-case as extra if-statements if the
-modules and graph are doing their jobs. They **show up from interaction**.
-That is the society-of-specialists bet in code.
-
-**Curiosity.** Low confidence plus no memory hits → knowledge-gap signal
-→ memory broadens → if still empty, planning adds **exploratory subgoals**
-the user did not name (adjacent config, last deploy, a second store).
-From the outside it looks like the agent "wondered." Inside it is a
-flag and a route.
-
-**Adaptive persistence.** Execution fails, stagnation fires, attention
-sends planning a "do not repeat" constraint, memory records the miss.
-Next time the same problem type appears, planning starts somewhere else.
-That is learning from failure without a training job.
-
-**Selective depth.** Fast path on easy+familiar; full cycle on
-contradictory+novel. Same binary, different token bill. If everything
-takes the full cycle, attention is shy. If everything takes the fast
-path, attention is lying.
-
-**Composition under constraints.** Evaluation refuses shallow one-tool
-answers on compositional types; planning is forced to name a dependency
-order; execution actually runs that order. You did not hard-code "always
-search then open then compute." You made **shallow answers fail a
-check**.
-
-If they do not show up, do not add a "curiosity prompt." Inspect signals,
-routes, and whether memory writes actually happen.
-
-## Measuring cognitive capability
-
-Not a leaderboard. A **diagnostic** you can run on *your* agent, aimed at
-the same five messes. Steal the probes. Write them as fixtures. The test
-is the requirement.
-
-| Failure | Probe | Pass looks like | If you fail, open |
+| Failure | Probe | Pass looks like | Open |
 |---|---|---|---|
-| Glossy miss | Query whose top hit is a TOC / index page | Agent flags junk evidence; does not cite nav as procedure | Evaluation scores |
-| Groove lock | Query with no good hits | Pivot within a few hops, not identical retries | Attention + overlap |
-| Rigor mortis | Mid-run, user says the first plan failed | Strategy changes; old plan is in history as rejected | Planning + signals |
-| Coverage bluff | Empty store on purpose | Uncertainty / escalate, not a fluent invention | Boundary + gate |
-| Tool salad | Task that needs search *then* file *then* compute | Ordered composition, not three unrelated calls | Planning graph |
+| Glossy miss | Top hit is a table of contents or an index page | Junk evidence is flagged. Navigation is not cited as procedure | Evaluation scores |
+| Groove lock | A query with no good hits | A pivot within a few hops, not identical retries | Attention and overlap |
+| Rigor mortis | Mid-run, the user says the first plan failed | Strategy changes. The old plan is in history as rejected | Planning and signals |
+| Coverage bluff | An empty store, on purpose | Uncertainty or escalate, not a fluent invention | Boundary and the gate |
+| Tool salad | Search, then the file it named, then a computation | An ordered composition, not three unrelated calls | The planning graph |
 
-### Cognitive efficiency metrics
+Walk the probes as fixtures, not as slogans.
 
-Four production numbers. Track them on traces, not on anecdotes.
+* **Glossy miss**: The top hit is an index page or a table of contents. Pass when the quality note calls it navigation and the reply does not cite it as the procedure. Fail when the heading is quoted with high confidence.
+* **Groove lock**: A query you already know has no good hit. Pass when the strategy changes within a few hops and history records the repeated query. Fail when the tool calls stay identical until the cap.
+* **Rigor mortis**: Mid-run, the user says the first plan already failed. Pass when that strategy is stored as rejected and the next action is a different one. Fail when the checklist finishes anyway.
+* **Coverage bluff**: The store is empty on purpose. Pass when the agent signals uncertainty or escalates. Fail when it invents a procedure and sounds sourced.
+* **Tool salad**: The task needs search, then the file that search named, then a computation on the file. Pass when the plan has those edges and execution follows them. Fail when the three calls are unrelated.
 
-**Cognitive efficiency.** Steps taken versus a sane minimum for that
-*task type*. A lookup that tours six modules is a fast-path bug. A
-contradictory incident that exits in one hop is an evaluation bug.
+Four production numbers, tracked on traces.
 
-**Metacognitive calibration.** Plot confidence vs later correctness (human
-or judge). A well-calibrated agent is roughly diagonal. High confidence
-on wrong answers is the glossy miss in aggregate. Low confidence on easy
-wins is a boundary detector with an itch.
+* **Cognitive efficiency**: Steps taken versus a sane minimum for that task type. A lookup that tours six modules is a fast-path bug. Attention was shy. A contradictory incident that exits in one hop is an evaluation bug. The runbook was allowed to win.
+* **Metacognitive calibration**: Plot workspace confidence against later correctness, from a human or a judge. A well-calibrated agent is roughly diagonal. High confidence on wrong answers is the glossy miss in aggregate. Low confidence on easy wins means the boundary detector is flagging questions that were inside coverage.
+* **Adaptation rate**: Hops from the stagnation signal to a strategy that actually moves the findings. Lower is better. Infinite means the flag fired and planning repeated the failed strategy anyway.
+* **Knowledge-boundary accuracy**: False positives are uncertainty theater on easy questions. False negatives are a hallucinated procedure delivered with a straight face. Optimize the pair. Driving one rate to zero inflates the other.
 
-**Adaptation rate.** Hops between stagnation-detected and a strategy that
-actually moves findings. Lower is better. Infinite means you detect and
-do not pivot.
+Run the same probe set on three compositions.
 
-**Knowledge-boundary accuracy.** False positive rate (uncertainty theater
-on easy questions) vs false negative rate (hallucinated procedure with a
-straight face). Optimize the pair, not one side.
+1. **Flat ReAct**: One loop, one primitive, no workspace. The baseline the probes should beat. On the checkout ticket it pastes the runbook.
+2. **Cognitive, empty graph**: The modules run, and memory has no scars yet. You are paying for routing without experience. Familiar types are not short yet. This is the first day.
+3. **Cognitive, scarred graph**: The same composition after a few dozen completed tickets. Observations are outcomes. Experience should raise calibration, shorten familiar types, and cut stagnation events.
 
-Those four numbers are honesty and efficiency, not a leaderboard: they
-tell you whether the extra modules pay rent.
+Compare correctness, calibration, graceful degradation (how often uncertainty was required and was actually signaled), and tokens per solved ticket. The plot that matters is empty versus scarred. If the scarred graph is worse, noisy hops were stored as gospel. Hygiene still applies: write outcomes, not transcripts.
 
-### Before and after
+The number worth celebrating is fewer incidents per thousand tickets at similar spend. A token spike excused with "but calibration" is not that number.
 
-Run the same probe set on:
+## 16. Keep the floor, swap the specialists
 
-1. A flat ReAct agent (one loop, one primitive).
-2. The cognitive composition, **empty** graph (first day).
-3. The same composition after a few dozen completed tickets (graph has
-   scars).
+The lab modules are narrow: a task-type list, a couple of servers, a menu of strategy names. The skeleton is not narrow. Workspace, attention, evaluation, gates, and graph memory stay. A wider agent comes from swapping specialists and keeping the floor: perception's taxonomy, execution's MCP hands, planning's menu. A bigger model does not grow a manager by itself.
 
-Compare correctness, calibration, graceful-degradation rate (how often it
-*should* signal uncertainty and does), and **tokens per solved ticket**.
-The interesting plot is (2) vs (3): experience should raise calibration,
-shorten familiar types, and cut stagnation events. If (3) is worse, you
-are writing junk into the graph (noisy hops stored as gospel). Memory
-hygiene still applies: observations should be outcomes, not transcripts.
+Move the same floor from incident response to internal policy Q&A. Replace perception's types: a policy question is ambiguous in a different way than a webhook. Replace execution's hands: the policy index, not the payload schema. Replace planning's menu: cite the clause, rather than hypothesis-testing a timeout. Keep the workspace slots, the attention router, the evaluation write, the confidence gate, the contradiction override, and the graph of which question-types the agent has already botched. The example floor of 0.3 is a policy you retune. The fact of a floor is what you keep.
 
-Celebrate **fewer incidents per thousand tickets** at similar spend, not
-a token spike you can excuse with "but calibration."
-
-### The road toward more general agents
-
-Lab modules are still **narrow** (task types, servers, strategy names).
-The **skeleton** is not: workspace, attention, evaluation, gates, graph
-memory. Wider agents come from **swapping specialists and keeping the
-shop floor** — perception's taxonomy, execution's MCP hands, planning's
-menu — not from hoping a bigger model grows a manager. Generalization
-here is architectural: compose monitorable skills. You will not ace
-compositional benchmarks with this lab agent. You will be pointed at
-composition and monitoring instead of at a longer system prompt.
-
-## Next steps in this book
-
-Cognition is the last *architecture* chapter in Lanham. What remains is
-**field craft**: how the five agency layers show up in support, RAG, and
-research products when a real queue is on the other side.
+Generalization here is architectural. You compose skills you can monitor. This lab agent will not ace a compositional benchmark. It points you at composition and at monitoring, which is the requirement a longer system prompt does not meet. The four numbers in section 15 tell you whether the extra modules pay rent. They are not a leaderboard. Fewer incidents per thousand tickets, at a similar spend, is the rent. A token spike excused with "but calibration" means the floor is not paying it.
 
 ## Check yourself
 
-1. A stakeholder says "we added CoT, ReAct, *and* Reflexion, so the
-   agent is cognitive now." What dispatcher is still missing, and which
-   failure mode stays likely?
-2. Pick a real incident from a system you know. Tag it as glossy miss,
-   groove lock, rigor mortis, coverage bluff, or tool salad. Which
-   module would you inspect first, and what field on the workspace
-   would you print?
-3. In one sentence each, define cognition vs metacognition as
-   *engineering* terms. Give one test you could run this week for each.
-4. Why is "I'm not sure" in the output not confidence calibration? What
-   would you plot instead?
-5. Map Minsky / Baars / Kahneman onto **module, workspace, router**
-   without retelling a psychology textbook. What bug appears if you
-   implement two of the three and skip one?
-6. When should attention take the fast path, and what log would convince
-   you it misfired?
-7. How does the cognitive cycle sit *inside* an outer task-loop iteration
-   without replacing that loop's termination gate?
-8. Sketch confidence-gate decisions for: confidence 0.2; confidence 0.45
-   with budget left; confidence 0.8 with an open contradiction signal.
-9. Stagnation fires. What must planning receive that it did not have on
-   the first attempt, and what should memory write before the session
-   ends?
-10. You swap this architecture from incident response to internal policy
-    Q&A. Which pieces do you replace, and which do you keep? Why is that
-    an argument about generalization?
+1. A stakeholder says the agent is cognitive now because it has chain-of-thought, ReAct, and Reflexion. Which dispatcher is still missing, and which failure mode stays likely?
+2. Pick a real incident from a system you know. Tag it as glossy miss, groove lock, rigor mortis, coverage bluff, or tool salad. Which module would you inspect first, and which workspace field would you print?
+3. In one sentence each, define cognition and metacognition as engineering terms. Name one test you could run this week for each.
+4. Why is "I'm not sure" in the output not confidence calibration? What would you plot instead?
+5. Map Minsky, Baars, and Kahneman onto module, workspace, and router. What bug appears if you build two of the three and skip one?
+6. When should attention take the fast path, and which log would convince you it misfired?
+7. How does the cognitive cycle sit inside one outer task-loop iteration without replacing that loop's termination gate?
+8. Sketch the confidence-gate decision for confidence 0.2, for confidence 0.45 with budget left, and for confidence 0.8 with an open contradiction signal.
+9. Stagnation fires. What must planning receive that it did not have on the first attempt, and what should memory write before the session ends?
+10. You move this architecture from incident response to internal policy Q&A. Which pieces do you replace, and which do you keep?

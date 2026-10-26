@@ -1,436 +1,208 @@
 # 3. Actions with MCP
 
-Companion notes for **Chapter 3** of *AI Agents in Action* (2nd edition,
-Micheal Lanham; Manning, 2026).
+Companion notes for **Chapter 3** of *AI Agents in Action* (2nd edition, Micheal Lanham; Manning, 2026).
 
-In-process tools — a Python function, a schema, a trace span — are enough for
-one app. They are not how an ecosystem works. MCP (Model Context Protocol) is
-the **standard socket** so a tool you wrap once can be loaded by a desktop
-host, an IDE, and your Agents SDK runtime without rewriting the schema for
-each vendor. Skip this chapter and you will copy Slack/GitHub/fs glue into
-every agent, debug "the tool" when you are actually debugging a pipe, and
-confuse Claude Desktop clicking a tool with an agent looping until a goal.
-Those are different products that happen to speak the same JSON-RPC.
+This chapter is the socket. It establishes how a host, a client, a server, and a service share one JSON-RPC shape, so a capability wrapped once can be loaded by a desktop app, an IDE, and an agent runtime. Afterward you can name the transport, the primitive (tool, resource, or prompt), and the agent layer that server feeds. A dead process, a rejected credential, and a model that never called the tool stop looking like the same bug.
 
-## The mental model
+## 1. One socket instead of a private dialect
 
-Without a protocol, every agent talks to every service in a private dialect.
-That is the N×M tax. MCP turns it into **N clients + M servers** that share
-one shape.
+Without a shared protocol, every agent talks to every service in a private dialect. That is an N×M tax: every new host pays for every capability, and every new capability pays for every host. **MCP** (Model Context Protocol) is an open JSON-RPC 2.0 convention, published by Anthropic in 2024, that turns the tax into N clients plus M servers.
 
 ```
-  HOST  (Claude Desktop, Cursor, your Runner, a platform worker)
+  HOST   (desktop app, IDE, your Runner, a platform worker)
     |
-    |  embeds one MCP client per server
+    |  one MCP client session per server
     v
-  CLIENT  JSON-RPC 2.0  <--- transport: STDIO  or  SSE/HTTP --->
+  CLIENT   JSON-RPC 2.0
+    |      transport: STDIO  or  SSE/HTTP
+    v
+  SERVER   (your FastMCP process, or an npx community server)
     |
     v
-  SERVER  (your FastMCP process, or `npx` community server)
-    |
-    |  fronts a real thing
-    v
-  SERVICE / RESOURCE
-    (GitHub API, a folder, a DB, a sequential-thinking store,
-     yesterday's in-process `get_research_sources`)
+  SERVICE  (GitHub, a folder, a database, a scratchpad,
+            yesterday's in-process get_research_sources)
 ```
 
-The one sentence to remember a year from now: MCP is USB-C for capabilities —
-tools, resources, and prompts — and it does not replace personas, sampling,
-guardrails, or a tool registry.
+* **What the socket carries**: Tools, resources, and prompts. People call it USB-C for those capabilities: one cable, many devices. Discovery, the call shape, and the response shape are the standardized part.
+* **What the socket does not decide**: Who may call, where the API key lives, whether the call was a good idea, or how a company versions and finds a tool. Those stay policy, secrets, evaluation, and registry work. A filesystem server with cloud keys in the environment is not "standardized." It is a wrapped secret.
+* **Discoverable is not safer**: `@mcp.tool()` makes a function visible to any host that speaks the protocol. It does not make the agent wiser, and it does not add a guardrail.
+* **Two wires, two topologies**: STDIO and SSE are process layouts. The wrong one is how a local demo refuses to run in a container, or how a singleton journal is cloned per subprocess and forgets.
 
-Two consequences fall straight out of that diagram. First, wrapping a
-function in `@mcp.tool()` does not make the *agent* safer or smarter; it
-makes the function **discoverable** by any host that speaks the protocol.
-Second, STDIO and SSE are not "advanced options." They are **different
-process topologies**, and picking the wrong one is how local demos refuse to
-run in a container, or how a singleton journal gets cloned per subprocess and
-"forgets."
+The protocol is the stable part. Each host's config file, and which primitives that host actually implements, are not. Desktop apps, IDEs, and agent CLIs invent their own config keys. The list and call messages stay JSON-RPC 2.0. Always ask whether this client consumes tools only, or also resources and prompts.
 
-## MCP fundamentals
+## 2. Four faces of the old mess
 
-Anthropic published MCP as an open JSON-RPC 2.0 convention (2024). By the
-time you read this, desktop apps, IDEs, and agent frameworks all speak some
-of it. The protocol is the stable part. Each host's config file and which
-primitives it actually implements are not. Always ask: **does this client
-consume tools only, or also resources and prompts?**
-
-This track introduced MCP so the five agent layers had a realistic socket.
-This chapter is the deep dive. Keep the five-layer map in your head; MCP can
-feed more than layer 2.
-
-### The N×M standardization problem
-
-Before a shared protocol, each model vendor grew a plugin format, each SaaS
-grew an SDK, and each agent framework grew a decorator. A "GitHub tool"
-written for one stack was a different object than a "GitHub tool" written for
-another. Data access was the same mess: one client for files, one for SQL,
-one for HTTP, each with its own auth and error shape. Multi-agent
-orchestration then invented a *fourth* way to pass those tools around.
-
-That is N agents × M capabilities: every new host pays M, every new service
-pays N. Wrap the capability once as an **MCP server**. Hosts implement **one
-client**. The combinatorial tax becomes addition.
-
-MCP does not, by itself, solve:
-
-- **Who is allowed to call** the tool (policy, IAM, human approval).
-- **Where the API key lives** (a secret store).
-- **Whether the call is a good idea** (eval, grounding).
-- **How you version and discover** tools across teams (a registry).
-
-If you pretend the protocol closed them, you will ship a filesystem server
-with your cloud keys in the environment and call it "standardized."
-
-Fragmentation had four faces people mixed up. Keep them separate when you
-write an incident doc:
+Fragmentation had four faces. Incident notes that mix them stay vague. MCP closes three of them and leaves the fourth to you.
 
 | Face | What broke | What MCP standardizes |
 |---|---|---|
-| Tool schemas | OpenAI functions vs other vendors' plugins | One list/call shape |
-| Data access | Bespoke file/DB/HTTP adapters | Resources (and tools that read) |
-| Orchestration glue | Each graph re-binds tools | Hosts share servers |
-| Control plane | Ad hoc allow lists in prompts | *Not really* — policy is still yours |
+| Tool schemas | One vendor's functions vs another's plugins | One list and call shape |
+| Data access | A custom adapter per files, SQL, and HTTP | Resources, and tools that read |
+| Orchestration glue | Each graph re-binds the same tools | Hosts share servers |
+| Control plane | Allow-lists buried in prompts | The calls are inspectable. The policy is still yours |
 
-That last row is the trap. A protocol can make control *possible* (you can
-inspect what was listed and called). It does not write the policy.
+* **Who may call**: IAM, a human approval, an allow-list. The protocol can show what was listed and what was called. It does not write the rule.
+* **Where the key lives**: A secret store. The model should not see the key as a tool argument.
+* **Whether the call was a good idea**: Evaluation and grounding. A successful JSON-RPC round trip can still be the wrong action.
+* **How teams find and version tools**: A registry. MCP gives you a server. It does not give you a catalog.
 
-### Clients, servers, and services
+A real internal API still needs an adapter behind the server. The protocol removed the per-host rewrite of the schema. Someone still maps your service's errors, auth, and payloads onto the primitives.
 
-USB-C: the cable is the protocol; the laptop socket is the **client**; the
-charger is the **server**; wall power is the **service**. Your agent is not
-the cable. It is one kind of **host** that holds clients.
+## 3. Host, client, server, service
 
-Roles, with the words people mix up:
+The cable is the protocol. The laptop socket is the client. The charger is the server. Wall power is the service. Your agent is one kind of host: the app that holds clients.
 
-- **Host** — the app the human or the orchestrator started. Claude Desktop,
-  Cursor, a Python `Runner` script, a platform worker. The host owns UX,
-  permissions prompts, and which servers are on.
-- **Client** — the library inside the host that speaks JSON-RPC to **one**
-  server. A host with four servers has four client sessions.
-- **Server** — a process (or HTTP endpoint) that advertises tools, resources,
-  prompts, and implements the calls.
-- **Service** — GitHub, a folder, Postgres, Brave, your journal list. The
-  server is an adapter in front of it.
+* **Host**: The process a person or an orchestrator started. A desktop app, an IDE, a Python `Runner`, a platform worker. The host owns the UX, the permission prompts, and which servers are switched on.
+* **Client**: The library inside the host that speaks JSON-RPC to one server. Four servers means four client sessions.
+* **Server**: A process or an HTTP endpoint that advertises tools, resources, and prompts, and implements the calls.
+* **Service**: GitHub, a folder, Postgres, a search API, your journal list. The server is an adapter in front of it.
 
-"We added MCP" said of a host, a server, and a SaaS in the same sentence
-leaves nobody knowing which layer a timeout belongs to. Draw the four boxes
-for *your* failure. A hung `npx` is a server process. A 401 from GitHub is
-the service. A host that never listed tools is a client lifecycle bug. An
-agent that listed them and still did not call is a **persona** bug: the
-schemas are in context, and the instructions never told the model to use
-them.
+On connect, client and server exchange capabilities. The client then **lists** tools, and maybe resources and prompts. The host stuffs those schemas into the model context. A chatty server is a prompt tax. Listing is not free.
 
-The handshake matters operationally. On connect, the client and server
-exchange capabilities. Then the client **lists** tools (and maybe resources
-and prompts). The host stuffs those schemas into the model context — the same
-token budget you measured when counting tool docstrings. A chatty server is a
-prompt tax. Listing is not free.
+A timeout belongs to one box. A hung `npx` is a server process that never became ready. An HTTP 401 from GitHub is the service. Tools that never appear in the trace are a client lifecycle or handshake bug. Tools that were listed, after which the model invented a URL, are a persona bug: the schemas were in context, and the instructions never required the call. That last one is not an MCP bug.
 
-Servers can also be **composed**: tomorrow someone wraps *your agent* as a
-server another host can call. Do not do that until you can run one server
-under the Inspector.
+Servers can be composed. Someone can wrap your agent as a server another host calls. Do that after one server runs cleanly under the Inspector, not before.
 
-### Tools vs resources vs prompts
+## 4. Tools, resources, and prompts
 
-Every server may expose three primitive types. They are not three spellings
-of `def`.
-
-**Tools** — verbs. The agent invokes them to **do** something or to fetch
-with arguments: `record_event`, `get_research_sources`, `create_issue`. They
-have names, descriptions, JSON-ish argument schemas, and results. This is
-what in-process functions were. Most agent hosts consume tools first; some
-consume *only* tools.
-
-**Resources** — nouns the host can read (and sometimes subscribe to): files,
-configs, a DB view, a URI. Think "open this document" more than "run this
-procedure." Good for grounding and for letting a desktop host show context
-without a fake tool. Bad as a substitute for an action that needs arguments
-and side effects.
-
-**Prompts** — reusable instruction templates the server authors. A host can
-offer them as slash-commands or as a starting persona fragment. They are not
-your agent's whole layer 1. They are packaged prompts that travel with the
-capability (e.g. "review this diff in our style").
+A server may expose three primitives. They are not three spellings of `def`.
 
 ```
-  list_tools / call_tool          -->  ACT   (layer 2, and others)
-  list_resources / read_resource  -->  READ  (often layer 4 fuel)
-  list_prompts / get_prompt       -->  SEED  (fragments of layer 1)
+  list_tools / call_tool            -->  ACT
+  list_resources / read_resource    -->  READ
+  list_prompts / get_prompt         -->  SEED a persona fragment
 ```
 
-A client that only implements tools pushes authors to wrap "read file" and
-"here is a prompt" as tools to make them visible. That workaround works. It
-also pollutes the tool list (token cost, worse selection) and lies about side
-effects. If you control the host, implement the primitive. If you do not,
-document that your "resource" is a tool with no mutation, and keep its name
-honest (`read_*` next to `run_*`).
+1. **Tools**: Verbs. The agent calls them to do something, or to fetch with arguments: `record_event`, `get_research_sources`, `create_issue`. Each has a name, a description, a JSON-ish argument schema, and a result. Most agent hosts consume tools first. Some consume only tools. Use a tool when the call takes arguments or changes the world. A mail-sending tool is a mutation with a schema. It is not "just another function."
 
-Discovery is part of the product. The descriptions the Inspector shows are
-the descriptions the model uses to choose. Docstrings on `@mcp.tool()` are
-**prompts**. Treat them with the same care as function docs: when to call,
-what args mean, what comes back, what "empty" means.
+2. **Resources**: Nouns the host can read, and sometimes subscribe to. Files, configs, a database view, a URI. "Open this document" fits. A procedure with side effects does not. Use a resource to ground a turn or to show context in a desktop host. Forcing an argument-heavy action into a resource drops the schema that would have constrained it.
 
-Not every server should expose all three. Empty primitives are not a score.
+3. **Prompts**: Reusable instruction templates the server authors, such as "review this diff in our style." A host can offer them as slash-commands or as a starting fragment of a persona. They travel with the capability. They are not the agent's whole persona. A template that is versioned with the server should be the copy the host loads. A second, divergent copy pasted into `instructions` will drift.
 
-### Deployment patterns
+A client that only implements tools pushes authors to wrap "read this file" and "here is a prompt" as tools so they show up. That workaround makes them visible. It also bloats the tool list (token cost, worse selection) and lies about side effects. If you control the host, implement the primitive. If you do not, name the stand-in honestly (`read_*` next to `run_*`) and document that it does not mutate. Empty primitives are not a score. Expose the ones this server actually has.
 
-Where the server process lives is a product choice, not an implementation
-leftover.
+The description the Inspector shows is the description the model uses to choose. The docstring on `@mcp.tool()` is a prompt: when to call, what the arguments mean, what comes back, what empty means. "Provides a list" is weak. "Return the allow-listed sources; call this before planning; do not invent others" is operational.
+
+## 5. Where the process lives
+
+Transport follows the trust boundary. The protocol will carry a dangerous tool over either wire.
 
 ```
-  LOCAL (child process)
-    agent  --STDIO-->  server.py / npx ...
-    one caller, one lifetime, no port
+  LOCAL STDIO     host spawns the server on pipes
+                  one caller, one lifetime, no port
 
-  LOCAL but out-of-process HTTP
-    agent  --SSE-->  localhost:8000
-    server already running; several agents can attach
+  LOCAL SSE       server already listening on localhost
+                  several agents can attach
 
-  REMOTE
-    agent  --SSE/HTTP-->  cloud host
-    auth, latency, shared multi-tenant service
+  REMOTE          SSE/HTTP to a cloud host
+                  auth, latency, a shared service
 
-  HYBRID
-    secrets and files  -->  local STDIO
-    SaaS and search    -->  remote SSE
+  HYBRID          secrets and files on STDIO
+                  shared SaaS on remote SSE
 ```
 
-**Local / STDIO.** The host **spawns** the server, talks on stdin/stdout, and
-kills it when the session ends. Fast, simple, no open port. Strictly
-**one-to-one** with the parent. Great for desktop and for "this Python file
-is the server." Terrible as a shared cache: a new subprocess is a new empty
-`_journal = []`.
+1. **Local STDIO**: The host spawns the server, talks JSON-RPC on the child's stdin and stdout, and kills it when the session ends. No listen port. Low latency. The OS process boundary is the auth, plus whatever the host asked the human. Strictly one parent and one child. A second agent cannot attach to that pipe. Right for a desktop, a CLI, a test, and "this Python file is the server." Wrong for a shared cache: a new subprocess is a new empty `_journal = []`.
 
-**Local SSE.** You start the server yourself (`mcp run -t sse ...`). It
-listens. Agents connect as HTTP clients. Several agents can share **one**
-process (and one in-memory store, for better or worse). You now own a port, a
-health story, and "is it up?"
+2. **Local SSE**: You start the server yourself (`mcp run -t sse ...`). It listens. Agents connect as HTTP clients. Several agents can share one process and one in-memory store. You now own a port, a health check, and the question "is it up?" Right when startup is slow or several agents must see the same journal. Wrong when you did not want shared mutable state.
 
-**Remote.** Someone else owns the process. You own URL, TLS, auth, timeouts,
-and "what if it is slow." This is how community SaaS servers and internal
-platform MCP endpoints show up.
+3. **Remote**: Someone else owns the process. You own the URL, TLS, auth, and timeouts. Community SaaS servers and an internal platform endpoint show up this way. A slow remote tool stalls the agent loop. Timeouts are host policy.
 
-**Hybrid.** The grown-up default: keep **high-blast-radius** or
-**high-privacy** capabilities on STDIO next to the agent (files, secrets,
-prod-adjacent scripts). Put **shared, boring** capabilities on remote SSE
-(search, calendar, GitHub). Hybrid is a threat-model diagram.
+4. **Hybrid**: High-blast-radius or high-privacy capabilities stay on STDIO next to the agent: files, secrets, scripts that touch production-adjacent state. Shared, boring capabilities go to remote SSE: search, calendar, GitHub. One Compose file that puts every server on SSE, including the one that can delete the workspace, "because we standardized on HTTP," ignores the trust boundary.
 
-One Compose file with every server on SSE, including the one that can `rm`
-the workspace, because "we standardized on HTTP," breaks the rule. Transport
-follows **trust boundary**. The protocol will happily carry a dangerous tool
-over either wire. Sandboxing and egress policy still belong to you.
+STDIO pays a spawn cost every run. SSE pays an always-on server. Desktop jobs and many CI jobs are correctly STDIO. A shared tool farm is correctly SSE or HTTP. "SSE means production" is a slogan, not a rule.
 
-### How MCP feeds the five agent layers
+## 6. Which layer the server feeds
 
-People hear "MCP tools" and park the protocol entirely in layer 2. That
-underuses it. A server is a way to **ship a capability** to whatever layer
-needs it.
+A server ships a capability to whichever layer needs it. Parking every MCP server in "tools" underuses the socket. When you add a server, name the layer. If you cannot, you cannot write the guardrail or the eval.
 
-```
-  5 Evaluation     MCP: scoring, grounding, rubric servers
-  4 Knowledge      MCP: filesystem, Drive, DBs, memory graphs
-  3 Reasoning      MCP: sequential thinking, extra working memory
-  2 Tools/actions  MCP: GitHub, Slack, calendar, your app APIs
-  1 Persona        MCP: prompt templates (fragments, not the whole)
-```
+1. **Persona**: Prompt templates that seed a role. A fragment, such as an `incident_commander` prompt that travels with the server. The whole persona, including host-specific policy, stays in the agent's instructions. Two copies of the same policy will diverge.
 
-**Layer 2 — tools and actions.** The obvious mapping. GitHub issues, Slack
-posts, allow-listed HTTP, the research-sources list. This is also where you
-must classify **read vs mutate**. An MCP tool that sends mail is not "just
-another schema."
+2. **Tools and actions**: GitHub `create_issue`, a Slack post, allow-listed HTTP, the research-sources list. Classify read versus mutate. A tool that sends mail is an irreversible action that happens to have a schema.
 
-**Layer 3 — reasoning and planning.** Some servers do not touch the world;
-they give the agent a structured place to think (the sequential-thinking
-server is the canonical example). That is still a tool call in the trace. MCP
-is how you **externalize** the scratchpad so it is inspectable and reusable.
-Deep planning patterns still need their own design; the server is the door.
+3. **Reasoning and planning**: A server that does not touch the world and instead gives the agent a structured scratchpad. Sequential thinking is the usual example. The call still shows up as a tool span. The server makes the scratchpad inspectable and reusable. The planning method itself is still yours to design.
 
-**Layer 4 — knowledge and memory.** Resources and memory-shaped tools (load
-journal, graph memory). RAG-the-architecture is its own topic. Here you only
-need: the protocol can carry "read this / write that store" the same as it
-carries "create issue."
+4. **Knowledge and memory**: Filesystem, Drive, databases, a graph, `load_journal`. The protocol carries "read this store" and "write that store" the same way it carries "create issue." Retrieval quality is a separate problem. The socket only moves the read and the write.
 
-**Layer 5 — evaluation.** A grounding or critic step can be a server so more
-than one agent reuses it. Wrapping a scorer in FastMCP does not replace the
-practice of evaluation — rubrics, traces, regression sets.
+5. **Evaluation and feedback**: A rubric, a grounding check, a critic, exposed so more than one agent can call it. Wrapping a scorer in FastMCP does not replace rubrics, traces, or a regression set. It only shares the scorer.
 
-**Layer 1 — persona.** Prompt primitives can seed a role. They should not
-become the junk drawer of policies. If a prompt template is versioned with a
-server, say so in the host config; do not also paste a divergent copy into
-`instructions=`.
+The one people park in the wrong layer is the scratchpad: it looks like a tool call, and it is really a reasoning aid. Treat it as a writer of world-state and you will "guard" a notepad while the mail tool ships with no approval.
 
-When you add a server, **name the layer**. If you cannot, you cannot write a
-guardrail or an eval for it later.
+## 7. Writing the server
 
-## Getting started with MCP servers
-
-A desktop host is the gentlest on-ramp: a config file, a process, a hammer
-icon, a permission prompt. It is also a trap if you stop there, because
-**desktop hosts are usually assistants**. You will still use one to learn
-Inspector, transports, and "does my decorator match what I think I shipped."
-Community servers often need Node/`npx`; the book's appendix covers that
-on-ramp.
-
-By 2026 the same servers load in multiple IDEs and agent CLIs. Config keys
-change; JSON-RPC does not. Learn the primitives, not one vendor's `mcp.json`
-folklore.
-
-### Coding a server
-
-The smallest honest server is `get_research_sources` moved into a FastMCP (or
-equivalent) process.
-
-What the decorator actually does:
+The smallest honest server is `get_research_sources` moved into a FastMCP process. The decorator publishes a schema. It does not run the agent.
 
 ```
   @mcp.tool()
   def get_research_sources() -> list[str]:
-      """Provides a list of research sources."""
-      ...
+      """Return the allow-listed sources. Call before planning."""
 ```
 
-- **Function name** → tool name the model sees.
-- **Signature** → argument schema.
-- **Return annotation** → result shape the host may advertise.
-- **Docstring** → the only description the agent gets at list time. This is
-  a prompt. "Provides a list" is weak; "Return the allow-listed sources; call
-  before planning; do not invent others" is operational.
+* **Function name**: The tool name the model sees.
+* **Signature**: The argument schema. A default the schema dropped is a protocol bug, not an LLM bug.
+* **Return annotation**: The result shape the host may advertise. Return JSON-serializable types. A dict where the host expected a list is a schema bug.
+* **Docstring**: The only description at list time. Write it as a prompt.
+* **Same code, two entrypoints**: FastMCP serves STDIO when a host spawns the file, and SSE when you `mcp run -t sse`. Claude Desktop and `MCPServerStdio` can share that file. Two implementations means you pointed at two servers.
+* **Import time stays boring**: `FastMCP("Research Tools")` at module level is fine. Opening network connections or mutating files at import makes STDIO spawn slow and makes an SSE reload surprising.
+* **Stdout is the STDIO pipe**: A print for debugging is a byte on the RPC stream. It corrupts the session. Log to stderr or to a file.
 
-FastMCP (and friends) can serve **STDIO by default** when a host spawns the
-file, and SSE when you `mcp run -t sse`. Same code, different entrypoint.
-That is why the research-tools server can be used from Claude Desktop *and*
-from `MCPServerStdio` later without two implementations.
+A test that calls the Python function can pass while the host advertises a different name, a missing docstring, or a dropped parameter. The thing you shipped is the schema.
 
-A tool that works in a pytest of the function and fails in the host usually
-means you tested the Python, not the **schema**. Run the Inspector. Confirm
-the advertised name, params, and description. A missing docstring, a default
-argument the schema dropped, or a dict vs list return is a protocol bug, not
-an LLM bug.
+## 8. The Inspector
 
-Keep side effects out of import time. `FastMCP("Research Tools")` at module
-level is fine. Opening network connections or mutating global files at import
-is how STDIO spawn becomes slow and how SSE reloads surprise you.
+The **Inspector** is a host that is not an LLM. It connects, shows the live tool list, lets you call with arguments you choose, and shows the JSON-RPC. That split is how you stop blaming the model for a broken pipe.
 
-Return JSON-serializable types. Print-debugging on stdout **is** the STDIO
-transport. Logs on stdout corrupt the RPC stream. Log to stderr or a file.
+* **Reach for it when**: The agent "doesn't see" a tool you registered. A call fails only inside the model loop, and you want the same arguments with no persona. STDIO and SSE disagree (spawn env, working directory, port). The agent runtime swallowed an initialize error.
+* **The loop**: `mcp dev` on the absolute path of `server.py`, open the printed localhost URL, open Tools, run `get_research_sources`, confirm the names you expected.
+* **Inspector succeeds, the agent never calls**: Persona, tool-list size, or sampling. The schema is fine. Stop editing the server.
+* **Inspector fails**: Server, transport, or schema. A missing docstring, a default the schema dropped, or a dict where the host expected a list.
+* **The host never connects**: Command path, `npx`, environment, or working directory. The model will otherwise improvise a tool result in prose.
+* **Absolute paths**: A relative path is how a desktop app and a `Runner` launched from another directory load different files that share a name.
 
-### Using the MCP Inspector
+The cheapest experiment is one Inspector call with the same command line the SDK spawns. If that returns the three source names, stop editing the server and read the persona and the trace.
 
-The Inspector is a host that is not an LLM. That is the point. It connects to
-your server, shows the live tool list, lets you **call with arbitrary args**,
-and shows JSON-RPC.
+## 9. STDIO and SSE
 
-Reach for it when:
+Two transports show up throughout this chapter. Others exist (plain HTTP, stdio over SSH). Master these two. Switching in the Agents SDK is a constructor change, `MCPServerStdio` or `MCPServerSse`, plus how the process is started. Tool names should not change. If they do, you pointed at a different server.
 
-- The agent "doesn't see" a tool you registered (schema / name / init error).
-- A call fails only inside the model loop (reproduce with the same args, no
-  persona).
-- STDIO vs SSE behave differently (spawn env, cwd, port).
-- You need to see initialize errors that a pretty agent runtime swallows.
+1. **STDIO**: The client launches the server as a subprocess. JSON-RPC rides the child's stdin and stdout. No listen port. No extra auth on the wire. One parent, one child. Fits a desktop, a CLI, a test, `docker run -it`, and "run this file." Hurts when state must be shared across agents, when the host is remote, or when the server must outlive a single run. Measure spawn cost: you pay it every run.
 
-Typical loop: `mcp dev /absolute/path/to/server.py` → open the printed
-localhost URL → Tools → run `get_research_sources` → confirm the three names
-you expected.
-
-Debugging only through the agent — change prompt, rerun, shrug — wastes
-hours. Binary-search the stack. Inspector succeeds, agent fails → persona,
-tool list size, or sampling. Inspector fails → server, transport, or schema.
-Host never connects → command path, `npx`, env, cwd. You cannot skip this
-split; the model will happily improvise a tool result in prose.
-
-Use **absolute paths** in spawn configs. Relative paths are how Desktop and a
-`Runner` launched from another cwd load different files that happen to share
-a name.
-
-### Transport types: STDIO and SSE
-
-Two transports show up everywhere in this chapter. Others exist in the wild
-(plain HTTP, stdio-over-SSH hacks). Master these two.
-
-**STDIO**
-
-- Client launches server as a **subprocess**.
-- JSON-RPC on the child's stdin/stdout.
-- No listen port, low latency, no extra auth on the wire (the OS process
-  boundary *is* the auth, plus whatever the host prompted the human).
-- **One parent, one child.** You cannot attach a second agent to that pipe.
-- Fits: desktop, CLI, tests, `docker run -it`, "run this file as the server."
-- Hurts: sharing state across agents, remote hosts, anything that must
-  outlive a single run.
-
-**SSE (HTTP + server-sent events)**
-
-- Server already listening; client opens a URL
-  (`http://localhost:8000/sse` in the book's-shaped examples).
-- Multiple clients can attach.
-- Fits: local shared server, containers with a port, remote deployment.
-- Hurts: more moving parts (bind address, path, health, timeouts). Auth is
-  now **your** problem. NAT and proxies eat long-lived streams.
+2. **SSE (HTTP plus server-sent events)**: The server is already listening. The client opens a URL (`http://localhost:8000/sse` in the usual local example). Several clients can attach. Fits a local shared server, a container with a port, and a remote deployment. Hurts because you now own bind address, path, health, and timeouts. Auth is yours. NAT and proxies eat long-lived streams. You pay an always-on process instead of a spawn.
 
 ```
-  STDIO:   host spawns ----pipes----> server   (lifetime coupled)
-
-  SSE:     server runs <----HTTP----  host     (lifetime decoupled)
+  STDIO:   host spawns ----pipes----> server    lifetimes coupled
+  SSE:     server runs  <----HTTP----  host      lifetimes decoupled
 ```
 
-Switching in the Agents SDK is mostly a **constructor swap**
-(`MCPServerStdio` vs `MCPServerSse`) plus how you start the process. The tool
-names should not change. If they do, you did not switch transport; you
-pointed at a different server.
+`localhost` from inside a container is not your laptop. The URL is a DSN: one documented value per environment. FastMCP defaults to STDIO when spawned and to SSE when run with `-t sse`. A port hardcoded in three files will not stay that DSN.
 
-"SSE is production, STDIO is toy," said as a rule, is wrong. Production
-desktop and many CI jobs are correctly STDIO. Production *shared* tool farms
-are correctly SSE/HTTP. Measure process startup too: STDIO pays spawn cost
-every run; SSE pays an always-on server.
+## 10. A desktop host and an agent host
 
-### Desktop vs agent hosts
-
-Claude Desktop (and ChatGPT / IDE MCP panels) will load your server. That is
-useful and **not the same execution model** as the Agents SDK.
-
-Permission prompts are a **security UX**, not the definition of assistant vs
-agent. Plenty of coding agents ask before `rm`. Plenty of assistants auto-run
-a search. Do not use the modal as your taxonomy.
-
-The difference that matters is the **loop**:
+A desktop app will load your server and show a permission prompt. That is a useful test of the schema. It is a different execution model from an agent runtime. The modal is a security UX. Coding agents sometimes ask before a destructive call. Assistants sometimes auto-run a search. The modal is not the taxonomy.
 
 ```
   ASSISTANT HOST (typical desktop chat)
-    user turn -> maybe a few tool calls -> answer -> STOP
-    human is the scheduler for the next goal
+    user turn -> a few tool calls -> answer -> STOP
+    the human schedules the next goal
 
-  AGENT HOST (Runner, your graph)
+  AGENT HOST (Runner)
     goal -> tool -> observe -> plan -> tool -> ...
-    until termination / budget / guardrail
-    human is not in the loop each hop
+    until a stop, a budget, or a guardrail
+    no human click on each hop
 ```
 
-A server "works in Desktop" so it is declared agent-ready. Under a Runner it
-loops, double-writes, or never stops. Test with an **autonomous** host.
-Idempotent tools, clear "already recorded" results, and personas that say
-when to stop matter more once nobody clicks each call. Desktop success means:
-schema loaded, one-shot call returned. Agent success means: sense-plan-act-
-learn over many calls still makes sense.
+* **Desktop success**: The schema loaded and a one-shot call returned.
+* **Agent success**: Sense, plan, act, and learn still make sense across many calls. Idempotent tools, a clear "already recorded" result, and a persona that says when to stop matter once nobody clicks.
+* **Errors are strings to the agent**: A desktop user sees a toast. The model sees an observation and may retry until the budget dies. Return a structured error.
 
-Desktop users see a toast. Agents see a string observation and may retry until
-the budget dies. Return structured errors.
+### Watch for
 
-## Using MCP with agents
+* "It works in the desktop app" used as evidence the server is safe under `Runner.run` for a twenty-step goal. The desktop run stopped. The agent run loops, double-writes, or never stops.
+* A tool that is not idempotent. The assistant clicked once. The agent may call `record_event` again because the observation did not say "already recorded."
+* Debugging only by editing the prompt and rerunning. Inspector-versus-agent is the split that tells you which layer moved.
 
-Now the host is the OpenAI Agents SDK (or the same pattern elsewhere):
-`mcp_servers=[...]` on the `Agent`, Runner as before. The model does not
-"speak MCP." The runtime lists tools, stuffs schemas into the completion,
-executes calls, and feeds observations back. MCP is behind the same tool span
-you already learned to read.
+## 11. Attaching STDIO from the agent
 
-Actions, in this track's vocabulary, are whatever the agent does to finish a
-goal: tools, resource reads, even a handoff. MCP is how many of those actions
-get **hosted**.
-
-### Local MCP over STDIO
-
-Pattern: the agent process **owns** the server process.
+The agent process owns the server process. An **action** is anything the agent does to finish a goal: a tool call, a resource read, or a handoff. MCP is how many of those actions get hosted. The runtime lists tools, puts schemas into the completion, executes the call, and feeds the observation back. The model does not speak MCP. The span you already know how to read is still the span.
 
 ```
   SCRIPT = Path(__file__).with_name("server.py").resolve()
@@ -450,35 +222,20 @@ Pattern: the agent process **owns** the server process.
       result = await Runner.run(agent, "Get the available ...")
 ```
 
-Why this shape:
+* **`async with`**: The session lifetime is the child's lifetime. Done correctly, you do not leak `mcp` processes.
+* **Absolute script path**: The working directory cannot silently pick another file.
+* **Instructions still matter**: The server can list tools. The persona still has to say to use them.
+* **Async runner**: STDIO and RPC wait. A naive sync story fights that wait.
+* **Stale descriptions**: You edited the server and the agent still shows the old docstring. A spawned process loaded bytecode, or a different path. Confirm `SCRIPT`, kill strays, and point the Inspector at the same command the SDK runs.
+* **Memory dies with the child**: An in-memory global resets when the process exits. A pure function such as an allow-list wants that. A journal does not. STDIO means the diary dies with the run unless the service persists it (a file, a database) instead of a module-level list.
 
-- **`async with`** ties session lifetime to the child. No orphan `mcp`
-  processes if you got the wait right.
-- **Absolute script path** so cwd does not pick another file.
-- **Instructions still matter.** The server can list tools; the persona still
-  has to say to use them.
-- **Async runner.** STDIO and RPC sit badly in a naive sync story once
-  anything waits.
+## 12. Attaching SSE, and other people's servers
 
-You edit the server, rerun the agent, and see old tool descriptions. You are
-looking at a spawned process that loaded bytecode or a different path.
-Confirm `SCRIPT`, kill strays, use Inspector against the same command the SDK
-runs. Caching and "helpfully" reused sessions will gaslight you.
-
-In-memory globals on the server **reset** when the child dies. For a
-research-sources list that is a feature (pure function). For a journal, STDIO
-means **the diary dies with the run** unless you persist in the service (a
-file, a DB) instead of a module list.
-
-### Local MCP over SSE
-
-When in-process spawn is the wrong topology — slow startup, need several
-agents, want to keep a journal alive — run the server as an HTTP process and
-attach.
+When spawn is the wrong topology — slow startup, several agents, a journal that must stay alive — run the server as HTTP and attach.
 
 ```
-  # terminal 1
-  mcp run -t sse 01_claude_mcp_server.py
+  # server process
+  mcp run -t sse tracker_mcp.py
 
   # agent process
   async with MCPServerSse(
@@ -488,199 +245,68 @@ attach.
       ...
 ```
 
-Same agent instructions, same tool names, different **how we connect**. That
-is the pedagogical point of flipping STDIO → SSE without changing the
-persona.
+Same instructions, same tool names, a different connection. That is the point of the swap.
 
-Consequences you must actually handle:
+* **Start order**: The agent is not the process supervisor. A down URL is a client error, not a failed spawn.
+* **Shared state**: Two agents, one SSE server, one `_journal`. That is coordination, or it is tests contaminating each other. A global list without a lock is a demo once more than one client connects.
+* **Fan-out is why you picked SSE**: Multiple clients mean you have a concurrency story on the server.
+* **Ops is the real cost**: The constructor swap is small. Environment, secrets, network, and state are not. STDIO remains the right default for many single-agent runs.
 
-- **Start order.** The agent is not your process supervisor. If the URL is
-  down, you get a client error, not a spawn.
-- **Shared state.** Two agents, one SSE server, one `_journal`: they share
-  memory. That is either a feature (coordination) or a bug (tests
-  contaminate each other).
-- **Host binding.** `localhost` from inside Docker is not your laptop.
-  Compose networks and published ports are deployment territory; learn the
-  words now.
-- **Fan-out.** Multiple clients are why you picked SSE. They also mean you
-  need to think about concurrency in the server (a global list without a lock
-  is a demo).
+You should not hand-wrap GitHub in week one. Reference and community servers already exist: filesystem, sequential thinking, Drive, calendar, search, and a long tail installed with `npx`.
 
-FastMCP defaults on STDIO when spawned, SSE when run with `-t sse`, and
-someone hardcodes the port in three files. One documented URL per
-environment. Treat it like a DSN. The constructor swap is easy; the **ops**
-around SSE is the real cost, which is why STDIO remains correct for many
-agents.
+* **Read the list in the Inspector first**: Fifteen filesystem verbs will swamp a small persona. The short-list rule survives the protocol. Capability is not the number of MCP rows in a config file.
+* **Pin versions**: `npx -y @scope/pkg` with no version is a supply-chain lottery and a behavior lottery.
+* **Scope filesystem roots**: A server that can read a home directory is an exfiltration primitive. Pass an explicit directory. A server that can read a secrets volume is the same primitive with a worse root.
+* **Name the layer while you attach it**: Sequential thinking is reasoning. Filesystem is usually tools plus knowledge. A calendar write is an irreversible tool.
+* **Know which credential story you are in**: A token in a desktop config file is a different threat than a token in a platform secret store.
+* **Configure before you fork**: A community server that is almost right gets a flag. A fork misses protocol updates.
 
-### Standard and community servers
+Adding five `npx` servers "to look capable" spends the window on schemas. The model then calls nothing useful. Minimum servers for the goal.
 
-You should not wrap GitHub by hand on week one. Reference and community
-servers exist: filesystem, sequential thinking, Drive, calendar, search, and
-a long tail installable with `npx` (Node) or equivalent.
+## 13. Hosting the functions you used to import
 
-How to consume them like an adult:
-
-- **Read the tool list in Inspector** before you hand them to an agent.
-  Community servers are large. Fifteen filesystem verbs will swamp a small
-  persona.
-- **Pin versions.** `npx -y @scope/pkg` without a version is a supply-chain
-  and a behavior lottery.
-- **Scope filesystem roots.** A server that can read `$HOME` is not a
-  "standard tool"; it is a data-exfiltration primitive. Pass an explicit
-  directory.
-- **Name the layer.** Sequential thinking is layer 3. Filesystem is usually
-  2 + 4. Calendar mutate is layer 2 with irreversible consequences.
-- **Credentials.** Drive and GitHub servers need tokens. Those tokens in a
-  desktop config file are a different threat than tokens in a platform secret
-  store. Know which story you are in.
-
-Adding five `npx` servers to look capable is how the model spends the window
-reading schemas and then calls nothing useful. Minimum servers for the goal.
-The "short tool list" rule survives the protocol change. Capability is not
-measured in MCP rows in a JSON config.
-
-When a community server is almost right, configure it; do not fork it for one
-flag. Forks miss protocol updates.
-
-## Building servers for agents
-
-The last move in the chapter is the one you will repeat at work: **stop
-registering in-process functions on the Agent; host them.** The time-tracker
-/ journal example is the teaching story: a loop records events with
-`record_event`, then a summary uses `load_journal`. First both functions live
-in the agent file. Then they move.
-
-Why bother if the Python is the same:
-
-- **Reuse.** A second agent (or Desktop, or an IDE) can load the journal
-  tools without importing your app.
-- **Separation.** Persona and sampling stay in the host; I/O stays in the
-  server. You can eval them apart.
-- **Deployment choice.** The same server file can be STDIO today and SSE
-  tomorrow.
-- **Honesty about state.** Once the journal is a service, you have to say
-  where it lives. A hidden global in the agent module pretended not to be a
-  database.
-
-### Converting tools to a server
-
-Mechanically: new module, `FastMCP("Time Travel Tracker")`, decorate the same
-functions, keep docstrings as prompts, keep types JSON-friendly.
+The move you repeat at work: stop registering in-process functions on the `Agent`, and host them. The teaching story is a time tracker. `record_event` appends. `load_journal` reads. First both live in the agent file. Then they move.
 
 ```
   BEFORE                         AFTER
   agent.py                       tracker_mcp.py
-    record_event  -------+         @mcp.tool record_event
-    load_journal  -------+         @mcp.tool load_journal
+    record_event                   @mcp.tool record_event
+    load_journal                   @mcp.tool load_journal
     Agent(tools=[...])             _journal = []   # now a question
          |                              |
          v                              v
-    Runner                         agent.py
-                                   Agent(mcp_servers=[...])
+    Runner                         Agent(mcp_servers=[...])
 ```
 
-The agent constructor **drops** `tools=[functions]` and **gains** a server
-session. Discovery replaces import. If a tool "disappears," it is a
-list/handshake failure, not a missed import.
+* **Reuse**: A second agent, a desktop host, or an IDE loads the journal tools without importing your app.
+* **Separation**: Persona and sampling stay in the host. I/O stays in the server. You can evaluate them apart.
+* **One file, two transports**: STDIO today, SSE tomorrow, without a second implementation.
+* **State becomes a decision**: A hidden global in the agent module was pretending not to be a database. Once the journal is a service, you say where it lives. In-memory is allowed in a lab. STDIO wipes it at the end of the run. A long-lived SSE process keeps it until restart. Anything real fronts a file or a database, with a concurrency story. MCP gives you a door. It does not give you durability.
+* **Discovery replaces import**: The constructor drops `tools=[functions]` and gains a server session. A tool that "disappears" is a list or handshake failure.
+* **Rewrite the docstring at the boundary**: Across a protocol, say the arguments, the idempotency rule (duplicate names append, or they reject), and whether `load_journal` must be called before `record_event`. Those sentences travel with the tool to every host. Host-specific policy stays in `instructions`: "always load the journal first; record new events; summarize from the tool; do not invent."
+* **Do not paste the argument list twice**: The schema already provides it. Duplicated schemas drift, the same way a prose copy of `output_type` drifts.
+* **Delete the demo verb**: A function that existed to print should not become a networked tool.
+* **Keep a private function only while it is private**: Native function tools and MCP servers can sit on one agent. Do that for a tiny tool no other process needs. The moment a second agent needs it, host it. Leaving the old import "as a backup" keeps two schemas and invites a double write.
 
-`_journal = []` at module scope, shipped as if it were durable, is the trap.
-Name the store. In-memory is allowed for a lab. Then pick transport knowing
-the lifetime (STDIO wipes it; long-lived SSE keeps it until restart). For
-anything real, the server fronts a file or DB, and you have a concurrency
-story. MCP does not give you persistence. It gives you a **door**.
+Remote consumption adds three host duties. Timeouts and retries are yours: a hung remote tool is an agent-loop failure. Auth headers belong on the client session, not in arguments the model can see. Schema drift (their server updated, your persona still describes old arguments) is cheaper to catch with the Inspector against the live server, read-only tools first, than to guess from a writeup.
 
-Docstrings often need a rewrite at the boundary. In-process, "add a new
-travel event" was enough because the developer sat next to the code. Across a
-protocol, say: arguments, idempotency ("duplicate entry names append or
-reject?"), and that `load_journal` should be called **before** recording if
-the persona must not clobber context. Those sentences are layer-1 adjacent,
-but they travel with the tool for every host. Keep host-specific policy in
-the agent's `instructions`.
+Local consumption still has a threat model. A filesystem server is full access to whatever root you passed. The STDIO command in tests should be the command you believe the desktop host runs.
 
-Converting is also when you delete dead tools. A function that existed "for
-the demo print" should not become a networked verb.
+### Watch for
 
-### Consuming local vs remote
-
-After the split, the host chooses a transport. Conceptually:
-
-```
-  LOCAL STDIO     spawn `mcp run tracker_mcp.py`
-                  one agent, fresh memory unless you persist
-
-  LOCAL SSE       `mcp run -t sse tracker_mcp.py` then URL
-                  shared memory among agents on that host
-
-  REMOTE SSE      URL + auth to someone else's tracker
-                  you consume; they operate
-```
-
-The SDK `with MCPServerStdio(...)` / `MCPServerSse(...)` block plus
-`mcp_servers=[session]` is the whole client story on purpose. You should feel
-slightly bored by the swap. The **unboring** parts are env vars, secrets,
-network, and state.
-
-When consuming **remote**:
-
-- Timeouts and retries are host policy. A hung remote tool is an agent-loop
-  failure mode.
-- Auth headers do not belong in tool arguments the model can see. They belong
-  in the client session config.
-- Schema drift: their server updated; your persona still describes old args.
-  Inspector against *prod* (read-only tools first) is cheaper than guessing
-  from a README.
-
-When consuming **local**:
-
-- You still need a threat model. Local filesystem MCP is full access to
-  whatever root you passed.
-- Dev/prod parity: the STDIO command in tests should be the command you think
-  Desktop uses.
-
-Agent instructions that copy the entire API of the server, then the server
-changes, drift. Instructions say **intent** ("always load the journal first;
-record new events; summarize from the tool, do not invent"). Names of tools
-should match, but do not paste argument lists that the schema already
-provides. Duplicated schemas drift — the same rule as `output_type`.
-
-You can mix: native function tools *and* MCP servers on one agent. Do that
-when a tool is truly private to the process (tiny, no reuse). If you find a
-second agent needing it, convert. That is the whole migration heuristic.
+* `_journal = []` shipped as if it were durable. Predict it: three events in one STDIO run are visible inside that run; the next `Runner` process sees an empty list; one long-lived SSE process shows all events to both agents, until restart. None of those is a database.
+* Instructions that copy the server's whole API. The server changes, the prose lies. Instructions say intent. Names of tools match the schema.
+* An agent that still imports `record_event` after the server exists. You failed to separate I/O from the host. Schema drift and a double write are the bugs that follow.
 
 ## Check yourself
 
-1. Draw N=3 hosts and M=4 services with bespoke plugins, then again with MCP.
-   Where does the remaining work live (you still pay N+M)? Give a real
-   internal API at your job that would still need an adapter behind the
-   server.
-2. A timeout fires. Using host / client / server / service, pick the box you
-   inspect first for (a) `npx` never started, (b) GitHub 401, (c) tools never
-   listed in the trace, (d) tools listed but the model invented a URL. Why is
-   (d) not an MCP bug?
-3. Your IDE client "doesn't support resources," so you expose `read_handbook`
-   as a tool. What did you gain, what did you pay in the tool list, and when
-   would you unwind the workaround?
-4. A journal server uses `_journal = []`. Predict the contents after three
-   events under STDIO (one run), after a second `Runner` process, and under
-   one long-lived SSE with two agents. Which topology matches a demo, which
-   matches a shared store, and what still is not durability?
-5. You put a filesystem MCP on SSE in Kubernetes "for consistency," with the
-   pod able to read a secrets volume. Which deployment-pattern rule did you
-   break, and what transport would you use instead for that server?
-6. Map each to a layer: GitHub `create_issue`, sequential thinking, a Drive
-   `read_resource`, a rubric scorer, a prompt template named
-   `incident_commander`. Which one is most often parked in the wrong layer,
-   and what fails when you do?
-7. Inspector can call `get_research_sources`; the agent never does. Name two
-   persona-or-sampling causes and one MCP-specific cause (handshake, path,
-   transport). What is the cheapest experiment that distinguishes them?
-8. Why is "it works in Claude Desktop" not evidence that the same server is
-   safe under `Runner.run` for a 20-step goal? Mention the loop, not the
-   permission modal.
-9. You convert in-process tools to MCP and the agent still imports the
-   functions "as a backup." What have you failed to separate, and what bug
-   class (schema drift, double write) becomes likely?
-10. A teammate says "we'll just use the org Tool Service; skip wrapping
-    servers." Which part of MCP do you still have to understand as an agent
-    author (list, call, transport, observation), and which part
-    (credentials, registry, policy) sits outside the protocol?
+1. Draw three hosts and four services with a private plugin per pair, then draw the same picture with MCP. Where does the work you still pay for live? Name one internal API that would still need an adapter behind the server.
+2. A timeout fires. For each case, name the first box you inspect (host, client, server, service, or persona): (a) `npx` never started, (b) GitHub returns 401, (c) tools never appear in the trace, (d) tools are listed and the model invents a URL. Why is (d) not an MCP bug?
+3. Your IDE client does not support resources, so you expose `read_handbook` as a tool. What did you gain, what did you pay in the tool list, and when would you unwind the workaround?
+4. A journal server uses `_journal = []`. What does it contain after three events in one STDIO run, after a second `Runner` process, and under one long-lived SSE server with two agents? Which topology is a demo, which is a shared store, and what is still missing for durability?
+5. A filesystem server runs on SSE in a cluster "for consistency," and the process can read a secrets volume. Which deployment rule did that break, and which transport fits that server?
+6. Map each to a layer: GitHub `create_issue`, a sequential-thinking server, a Drive read, a rubric scorer, and a prompt template named `incident_commander`. Which one is most often parked in the wrong layer, and what fails when you do that?
+7. The Inspector can call `get_research_sources`. The agent never does. Name two persona or sampling causes and one MCP cause (handshake, path, or transport). What is the cheapest experiment that distinguishes them?
+8. Why is "it works in a desktop chat" weak evidence that the same server is safe under `Runner.run` for a twenty-step goal? Answer with the loop, not with the permission modal.
+9. You move in-process tools to MCP, and the agent still imports the functions as a backup. What did you fail to separate, and which bug becomes likely: schema drift, or a double write?
+10. A teammate says the org tool service means you can skip learning servers. Which parts must an agent author still understand (list, call, transport, observation), and which parts sit outside the protocol (credentials, registry, policy)?

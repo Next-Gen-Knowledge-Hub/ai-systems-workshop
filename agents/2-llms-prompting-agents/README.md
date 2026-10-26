@@ -1,19 +1,12 @@
 # 2. LLMs, prompting, and agents
 
-Companion notes for **Chapter 2** of *AI Agents in Action* (2nd edition,
-Micheal Lanham; Manning, 2026).
+Companion notes for **Chapter 2** of *AI Agents in Action* (2nd edition, Micheal Lanham; Manning, 2026).
 
-This chapter is the first time you build. The model is a probability machine.
-The persona is how you bias that machine. The SDK is the loop that turns a
-prompt into something you can pin, type, trace, and arm with tools. Skip this
-chapter and you will treat GPT as a person, treat prompts as vibes, and ship
-an "agent" that is a `print()` around a chat completion. Then temperature,
-JSON, and a second tool will each surprise you as if they were unrelated bugs.
+This chapter is the machine under the agent. It establishes how a completion is produced, how a persona biases that machine, and how a small SDK pins the model, types the output, traces the run, and arms the model with tools. Afterward you can name the box a strange completion came from: the tokenizer, the forward pass, the sampler, the persona, the schema, or the tool observation. A `print()` around a chat completion stops looking like an agent.
 
-## The mental model
+## 1. The proposal pipeline
 
-Everything later in the Agents track sits on this pipeline. If you cannot
-point to which box a failure came from, you will retune the prompt forever.
+The model proposes the next token. You own everything around the proposal: sampling, the persona, schemas, the tool runtime, and the trace.
 
 ```
   text (system + user + tool results)
@@ -23,11 +16,9 @@ point to which box a failure came from, you will retune the prompt forever.
        |
        v
   [ FORWARD ]      same ids in  =>  same logits out
-                   (the "brain" is a next-token distribution)
        |
        v
   [ SAMPLE ]       temperature, top-p, top-k, penalties, max tokens
-                   pick ONE id from the distribution
        |
        v
   [ DETOKENIZE ]   id -> text fragment; append; repeat
@@ -35,364 +26,153 @@ point to which box a failure came from, you will retune the prompt forever.
        +-- until stop / max tokens / a tool-call schema fires
        |
        v
-  [ RUNTIME ]      OpenAI Agents SDK: Agent + Runner
-                   persona (instructions)  |  typed I/O  |  traces
-                   tools: your functions now; MCP servers later
+  [ RUNTIME ]      Agent + Runner
+                   instructions | typed I/O | traces | tools
 ```
 
-The one sentence to remember a year from now: the model proposes the next
-token; you own everything around the proposal — sampling, the persona,
-schemas, the tool runtime, and the trace.
+* **Tokenize**: The prompt becomes integer ids. The vocabulary is model-specific. The provider chose it at training time.
+* **Forward**: The network emits a **logit** (a raw score) for every id in the vocabulary. Same ids and same weights produce the same distribution. This step is deterministic.
+* **Sample**: Temperature, top-p, top-k, penalties, and the token cap pick one id. Run-to-run variation lives here, plus anything that changed in the prompt: hidden system text, tool schemas, prior tool results.
+* **Detokenize and repeat**: The id becomes a text fragment, is appended, and the loop continues until a stop, the token cap, or a tool-call schema fires.
+* **Runtime**: An `Agent` plus a `Runner` holds the persona, the types, the trace, and the tools. The model still does not run your Python. It names a call. The runtime executes it and puts the observation into the next tokenize step.
 
-Two consequences fall straight out of that diagram. First, "the model
-decided" is almost never a complete diagnosis: sampling, the prompt, the
-schema, or the tool observation may have decided. Second, a minimal `Agent`
-with only `instructions` is still a prompt step. Agency starts when the
-runtime can choose a tool and come back. That gap is why this chapter ends
-on tools.
+"The model decided" is an incomplete diagnosis until you know which box moved. A minimal `Agent` with only `instructions` is still a prompt step. Agency starts when the runtime can choose a registered tool, run it, and come back.
 
-## Understanding LLMs
+## 2. Next-token machines
 
-You do not need a transformer derivation to ship agents. You do need a
-picture that makes token bills, "why did it say that?", and temperature
-debates stop being folklore.
+An LLM is trained to score which token is likely to come next, given the tokens so far. Training chewed through text, then through preference data, until those scores were useful. Inference is the short version of that story.
 
-### Probabilistic token machines
+* **The four beats**: Tokenize the prompt. Emit a logit per vocabulary id. Sample one id. Append it and repeat.
+* **Greedy decoding**: Always take the argmax. A sampler with no randomness. Stable plans and tighter JSON live near this end.
+* **Creativity vs tightness**: Creativity is how you spread probability mass into the tail. Factual tightness is how sharply you peak the distribution, plus whether the right facts are in the context at all. The model fills a gap with something that sounds like the domain.
+* **Structure is a trick on the sampler**: Prompts, JSON schemas, tool-call formats, and a typed `output_type` change which tokens can win. Hoping for a stable shape does not.
+* **A tool grants grounded next tokens**: You show a schema (name, description, typed arguments). The model emits a structured call. Your runtime runs the function and returns an observation. The next forward pass sees that observation as ordinary tokens. The tool does not install new knowledge inside the weights.
+* **Same words, different input**: Hidden system text, a tool schema, and a prior tool result are part of the ids. The user sentence can look identical while the forward pass is a different call.
+* **The misfile**: A planner invents a source, or a JSON field flips type, and the ticket says "hallucination bug in the API." The weights scored a plausible continuation. The fact was missing from the context, or the sampler left enough tail to emit it.
 
-Teams talk about LLMs as if they know, intend, or retrieve. Then a planner
-invents a source, a JSON field flips type, and someone files it as a
-"hallucination bug in the API." Name the machine you actually run.
+A planner that must emit five stable tasks wants a peaked sampler. A brainstorming specialist may want more mass in the tail. Those are different roles, so they get different sampling contracts.
 
-An LLM is trained to score **what token is likely to come next**, given the
-tokens so far. Training chewed through text (and, later, preference data)
-until those scores got good enough to be useful. At inference time the
-story is smaller:
+## 3. Tokens and the window
 
-1. Your prompt is tokenized into ids.
-2. The network emits a **logit** for every id in the vocabulary.
-3. A **decoding / sampling** step turns logits into one id.
-4. That id is appended. Repeat.
+A **token** is an integer in that vocabulary: a word, a word piece, a space-plus-word, a punctuation cluster, sometimes a common phrase. People budget in characters or words. Bills, context windows, and truncated JSON are in tokens.
 
-The forward pass is **deterministic for a given input and weights**. The
-same prompt, same model revision, same nothing-random in the net: same
-distribution. Variation you see from run to run is almost always the
-sampler, plus anything you changed in the prompt (including hidden system
-text, tool schemas, and prior tool results).
+* **Measure, do not infer**: Count with the tokenizer that matches the model (the tiktoken family for many OpenAI-compatible models) or with the SDK's usage fields on the trace. An eval set of "about 800 words" is not a token count until you convert it. Two prompts that look the same length are different experiments when one of them is JSON.
+* **English prose is cheap-ish**: Common words often land as one token. Rare names, code identifiers, and text in other languages fragment into more ids.
+* **JSON is expensive for the same facts**: Braces, quotes, commas, and repeated keys (`"description":`) are tokens. A compact sentence and a pretty-printed object with the same payload can differ by 2× or worse. Use JSON when a schema needs it (tool arguments, typed outputs). A novel narrated as JSON pays for punctuation.
+* **Whitespace and fences cost**: Markdown fences, indentation, and a system reminder copied into every region are tokens.
+* **Output is usually dearer**: Providers price input and output separately. A chatty persona is a cost centre. Five short tasks and a five-paragraph essay are different products.
+* **The window is a token budget**: The transcript, the tool list, and a pasted PDF all spend the same budget. When a short question still exhausts the window, count ids in, ids reserved for the completion, and ids burned on tools and history.
+* **Schemas sit in the context**: Ten tools with long docstrings can cost more than the user message. The tool list is part of the prompt on every turn.
 
-That split is the whole job of this section. Creativity is how you carve a
-distribution. Factual tightness is how sharply you peak the distribution,
-plus whether the right facts are even in the context. Greedy decoding
-(always take the argmax) is a sampler with no randomness. Nucleus / top-p,
-top-k, and temperature are other samplers. Agents use all of them depending
-on the role of the step: a planner that must emit five stable tasks wants
-greedy-ish settings; a brainstorming specialist may want more mass in the
-tail.
+## 4. Sampling knobs
 
-Because the model only ever emits a token, structure is a trick you play on
-the sampler. You play it with prompts, with JSON schemas and tool calls, and
-with typed `output_type` later in this chapter. You do not play it by hoping.
-
-A second operational fact: the model does not execute your Python. When you
-"give it a tool," you give it a **schema**. It emits a structured call. Your
-runtime runs the function and stuffs the observation back into the next
-tokenize step. That is still this same machine. Tools do not grant knowledge;
-they grant grounded next tokens.
-
-### What is a token?
-
-A token is an integer in a model-specific vocabulary: a word, a word piece, a
-space-plus-word, a punctuation cluster, sometimes a whole common phrase.
-Tokenization is the map from bytes to those ids. You do not get to pick the
-map. The provider did, when they trained.
-
-People budget and debug in characters or words. Bills, context windows, and
-"why did this JSON blow the window?" are in **tokens**. Measure tokens.
-Never infer them from text length.
-
-Consequences you will hit in the first week:
-
-- **English prose is cheap-ish.** Common words often land as one token.
-  Rare names, code identifiers, and other-language text fragment more.
-- **JSON is expensive for the same facts.** Braces, quotes, commas,
-  repeated keys (`"description":`) are tokens too. A compact sentence and a
-  pretty-printed object with the same payload can differ by 2× or worse. Use
-  JSON when a schema needs it (tool args, typed outputs). Do not narrate a
-  novel in JSON "for structure."
-- **Whitespace and fences cost.** Markdown fences, indent, and duplicated
-  system reminders are not free.
-- **Providers price input and output separately.** Output is usually dearer.
-  A chatty persona is a cost centre. A planner that emits five short tasks is
-  a different product from a planner that writes essays.
-- **The context window is a token budget, not a character budget.** Stuffing
-  the transcript, the full tool list, and a PDF dump is how you hit the wall
-  in week two. Session truncation and retrieval manage that budget later; the
-  unit they manage is the token you met here.
-
-Practical habit: count with the tokenizer that matches the model (the
-tiktoken family for many OpenAI-compatible models, or the SDK's usage fields
-on the trace). If your eval set is "about 800 words," convert it. If two
-prompts "look the same length" and one is JSON, they are not the same
-experiment.
-
-Tool schemas sit in the context too. Ten chatty tools with long docstrings
-can cost more than the user message. That is a preview of the last section:
-the tool list is part of the prompt. When something "doesn't fit," ask: ids
-in, ids reserved for the completion, ids burned on tools and history. A short
-question can still exhaust the window.
-
-### Temperature, top-p, and related knobs
-
-Sampling knobs change **how you pick** from the distribution. They are not
-the same as HTTP retries, API keys, or timeouts. Those control the call.
-These control the token. Mixing the two in a config dump is how on-call
-cannot tell a 429 from a wild completion.
+Sampling knobs change how you pick from the distribution. HTTP retries, API keys, and timeouts change the call. Mixing the two in one config dump is how an on-call confuses an HTTP 429 with a wild completion.
 
 ```
   logits
-    |
-    |  temperature  -- sharpens or flattens the distribution
+    |  temperature                 sharpen or flatten
     v
   probabilities
-    |
-    |  top-k / top-p  -- optionally zero-out the tail
-    |  presence / frequency penalty -- push against repetition
+    |  top-k / top-p               drop the tail
+    |  presence / frequency penalty
     v
-  draw one token     (or argmax if temperature is 0 / greedy)
-    |
-    |  max_tokens / stop sequences -- hard stop, not a style hint
+  one token (argmax if temperature is 0)
+    |  max_tokens / stop sequences
     v
   append and repeat
 ```
 
-**Temperature.** Low (including 0) peaks on the mode: more repeatable plans,
-tighter JSON, less "creative" phrasing. High flattens: more diversity, more
-chance of a fluent wrong fact. For agent steps that must be evaluated, start
-low. You can always add a specialist later whose job is variation. You cannot
-eval a planner that emits a different graph every run and then blame the
-tools.
+Pick one primary knob per agent, write it down, and leave the other at a sane default unless the run is a real experiment. Pin **model + sampling + max tokens + reasoning effort** on each `Agent`. A creative sibling is a second agent with its own settings.
 
-**Top-p (nucleus).** Keep the smallest set of tokens whose cumulative
-probability exceeds *p*, then sample inside that set. Low top-p is another
-way to cut the tail. Pick one primary knob per agent, document it, and leave
-the other at a sane default unless you are running a real experiment. Two
-knobs moving in one deploy is one data point with no attribution: the eval
-moved, and you cannot say which knob helped.
+1. **Temperature**: Low, including 0, peaks on the most likely token: repeatable plans, tighter JSON, less decorative phrasing. High flattens the distribution: more diversity, and more chance of a fluent wrong fact. Steps you will evaluate start low. One global `temperature=0.7` on a research graph is a known incident: the planner drifts, the extractor invents fields, and the writer happens to look fine.
 
-**Top-k.** Hard cap on how many tokens remain after sorting. Less common in
-current OpenAI-style agent defaults; you will meet it on some local runtimes.
-Same idea: truncate the tail before drawing.
+2. **Top-p (nucleus)**: Keep the smallest set of tokens whose cumulative probability exceeds *p*, then sample inside that set. A low *p* cuts the tail. Temperature 0.2 and top-p 0.1 changed in the same deploy leave you with one data point and no attribution when the eval moves.
 
-**Max tokens.** A **cap**, not a target. The model does not "use up" the
-budget for quality. It stops when it hits the cap, a stop sequence, or a
-natural end. Too low: truncated JSON, half a tool call, a plan that ends at
-step 3 of 5. Too high: a runaway narrator and a bill. Set it from the schema
-of the step (five short tasks vs a long report), not from a global constant
-copied between agents.
+3. **Top-k**: A hard cap on how many tokens remain after sorting by score. Less common in current OpenAI-style agent defaults. Local runtimes still expose it. Same job as top-p: truncate the tail, then draw.
 
-**Frequency and presence penalties.** Nudge against repeating tokens already
-in the completion (frequency) or against tokens that appeared at all
-(presence). Useful for some creative jobs. For structured agent output they
-are usually noise: you want the same key names every time.
+4. **Max tokens**: A cap. The model stops at the cap, at a stop sequence, or at a natural end. It does not spend the budget to raise quality. Too low and you get truncated JSON, half a tool call, or a plan that dies at step 3 of 5. Too high and you get a narrator and a bill. Set the cap from the schema of that step (five short tasks, or a long report). A constant copied from another agent is how the extractor inherits the writer's budget.
 
-**Stop sequences.** Extra brakes. Handy when a legacy prompt still speaks in
-prose. Prefer typed outputs (below) over stop-sequence archaeology.
+5. **Frequency and presence penalties**: Frequency pushes down tokens already repeated in the completion. Presence pushes down tokens that appeared at all. Some creative jobs want that. Structured agent output usually wants the same key names every time, so the penalties are noise.
 
-**Reasoning / effort knobs on "thinking" models.** Frontier vendors now
-expose an extra axis: how much internal deliberation to spend before the
-visible tokens. Defaults are often medium or high. That default is usually
-wrong for an agent. An agent is many small, well-scoped steps. The persona
-and the tools already constrain the work. High effort on every hop adds
-latency and hidden tokens without changing the act. Set effort **minimal /
-none** on routine tool hops; raise it on the few steps that are actually hard
-(a nasty plan, a synthesis). This is the same discipline as temperature: per
-role, per hop.
+6. **Stop sequences**: Extra brakes for a legacy prompt that still speaks in prose. A typed `output_type` replaces stop-sequence archaeology once the SDK can reject a bad object.
 
-One global `temperature=0.7` on a multi-step research graph is a classic
-incident: the planner drifts, the extractor invents fields, the writer is
-accidentally fine. Pin **model + sampling + max tokens + reasoning effort**
-on each `Agent`. Treat them as part of the persona's contract. If you need a
-creative sibling, it is a second agent with its own settings, a second mood
-in the same constructor.
+7. **Reasoning effort**: An extra axis on thinking models: how much internal deliberation to spend before the visible tokens. Defaults are often medium or high. An agent is many small, scoped steps, and the persona plus the tools already constrain the work. High effort on every hop adds latency and hidden tokens. Set effort to **minimal / none** on routine tool hops. Raise it on the few steps that are actually hard: a nasty plan, a synthesis.
 
-## Prompt engineering as the persona layer
+### Watch for
 
-Layer 1 is **persona**: role, expertise, tone, operating constraints. Prompt
-engineering is the craft of writing that layer so the token machine is boring
-in the right ways.
+* Two sampling knobs moved in one deploy. Change one, rerun the eval, then touch the next.
+* A high default reasoning effort left on eight ticket-filing hops. The extra deliberation does not change the act. Raise it only on the hop that is hard.
+* `max_tokens` set once for the whole process. The step with the tight schema is the one that gets cut off.
 
-Models got better; the craft did not vanish. What vanished is the need for
-incantations ("you are GPT-4, take a deep breath"). What remains is clear
-work: who you are, what "done" looks like, what you must not do, where the
-inputs sit, which tools exist. A frontier model with a muddled persona still
-muddles. A smaller model with a sharp persona often wins the eval.
+## 5. The persona
 
-Facts about your company do not belong here. They belong in knowledge and
-retrieval. Mixing them is how a system prompt becomes a wiki and a compliance
-nightmare. Style and policy that must hold even when retrieval misses:
-persona. Tickets, SKUs, last week's incident: knowledge.
+**Persona** is the role, the expertise, the tone, and the operating constraints. Prompt engineering is how you write that layer so the token machine is boring in the ways you need.
 
-### Core techniques
+* **What still earns its tokens**: Incantations ("you are GPT-4, take a deep breath") stopped paying rent. What remains is who you are, what done looks like, what you must not do, where the inputs sit, and which tools exist. A frontier model with a muddled persona still muddles. A smaller model with a sharp persona often wins the eval.
+* **Facts live next door**: Style and policy that must hold even when retrieval misses belong in the persona. Tickets, SKUs, and last week's incident belong in knowledge you retrieve. A system prompt that is also a wiki is a compliance problem and an audit problem.
+* **A new hire with no eyes**: Brief a competent hire who has read the public internet up to the training cutoff and has not read your tracker. They fill gaps with something that sounds like the industry. "When you research X, always consider Y and Z" is closer to the completion you will get than "be thorough."
+* **Shared context fails quietly**: "The usual sources," "our style," and "you know what urgent means" are not in the tokens. Put names of sources, a one-line style rule, and a severity rubric in the prompt. A definition that changes every week is retrieved. It is a poor persona constant.
+* **Specific and short**: "Time-travel story, 1921, five paragraphs, humorous first person" is specific. A two-page essay on "what good research means" is long and still vague. Prefer clauses a trace can falsify: counts, lists, "only from the tool result," "if the tool errors, say so."
+* **Untrusted text can look like an instruction**: Web pages, tickets, PDFs, and other agents share the window. Delimit them. Tell the persona that a `USER` region and a `TOOL` region are data.
 
-These patterns keep showing up because they match how the models were
-trained: role-play, format imitation, local coherence, instruction following.
-They are not vendor-specific magic. Use them until a typed schema or a tool
-makes a given trick unnecessary.
+A short flowchart in the persona — fetch sources, keep the allowed ones, emit five tasks — often holds until a tool returns something ugly. The real loop is tools, observations, and a stop condition. A longer essay in the prompt does not grow that loop.
 
-**Assign a role that sets vocabulary.** "You are a senior incident commander"
-does more than flattery. It pulls the distribution toward severity,
-timelines, and comms, away from blog-post warmth. For agents, the role also
-names which tools are in character. A researcher may search; a clerk may
-file; a "helpful friend" will do both and also apologize.
+## 6. Instructions the sampler can follow
 
-**Say the task, then the constraints, in that order.** Front-load what to do.
-Put length, tone, and refusal rules next. Models overweight the start and the
-end of a prompt; they lose the middle of a manifesto. If a constraint
-matters, it is a bullet near the task, a footnote after three paragraphs of
-philosophy.
+These patterns keep showing up because training rewarded role-play, format imitation, local coherence, and instruction following. They are not vendor magic. Drop a trick once a typed schema or a tool makes it unnecessary.
 
-**Make the output shape explicit — unless the SDK already owns it.** "Five
-numbered tasks, five words or fewer" is a prompt-level schema. Once you set
-`output_type` (below), stop restating the JSON keys in prose. Duplicated
-schemas drift. Pick one source of truth.
-
-**Delimit regions.** User text, policies, examples, and untrusted tool output
-should not look like one soup. Markdown headings, XML-ish tags, or fenced
-blocks give the sampler edges. The point is not aesthetics. The point is so
-you can point at a region when a pitfall hits (contradiction, injection,
-example that looks like a new instruction).
-
-**Few-shot when the format is fiddly.** One or two *short* examples of the
-I/O you want beat a paragraph of negatives. Bad few-shots become the
-distribution: if every example is witty, the agent will be witty on a refund.
-For typed outputs, prefer a schema plus one example object, a short story.
-
-**Positive instructions over a wall of "don't."** "Write five tasks" beats
-"Don't write essays, don't use commas, don't number from zero." Negatives are
-leaks: they name the failure mode and sometimes summon it. Use a "don't" when
-the model keeps doing a specific wrong thing you have seen in traces.
-
-**Tool-use instructions are part of the persona.** "First call
-`get_research_sources`, then plan only from that list" is not a nice extra.
-Without it, a capable model will skip the tool and plan from parametric
-memory. You will only see that if you trace.
-
-**Chain-of-thought as a prompt trick vs as a layer.** Asking the model to
-think step by step can help a single completion. Deep patterns (ReAct, trees,
-Reflexion) are a reasoning layer of their own. Do not paste a full ReAct
-spec into every persona "for quality." You will pay tokens and still need the
-runtime loop.
-
-A compact map for an agent persona:
+* **Role**: "You are a senior incident commander" pulls the distribution toward severity, timelines, and comms, and away from blog-post warmth. The role also names which tools are in character. A researcher may search. A clerk may file. A "helpful friend" will do both, and apologize.
+* **Task, then constraints**: Put the task first. Put length, tone, and refusal rules next to it. The start and the end of a prompt outweigh the middle of a manifesto. A constraint that matters is a bullet beside the task.
+* **One output shape**: "Five numbered tasks, five words or fewer" is a prompt-level schema. Once `output_type` is set, stop restating the JSON keys in prose. Two copies of a schema drift. One of them is the source of truth.
+* **Delimiters**: User text, policy, examples, and tool output need edges: a heading, an XML-ish tag, or a fence. The point is that you can point at a region when a contradiction, an injection, or a bad example shows up.
+* **Few-shot**: One or two short examples beat a paragraph of negatives when the format is fiddly. Examples are part of the distribution. If every example is witty, the refund reply will be witty. For a typed output, prefer the schema plus one example object.
+* **Positive instructions**: "Write five tasks" beats "don't write essays, don't use commas, don't number from zero." A negative names the failure and sometimes summons it. Keep a "don't" for a specific wrong move you have already seen in a trace.
+* **Tool order**: "Call `get_research_sources`, then plan only from that list" is the contract. A capable model will otherwise skip the tool and plan from parametric memory. The skip is invisible until you read the trace.
+* **Step-by-step vs a reasoning method**: "Think step by step" can help a single completion. ReAct, tree-of-thought, and Reflexion need a runtime that actually iterates. Pasting a full method spec into every persona spends tokens and still does not run the loop.
 
 ```
   ROLE          who, and whose tools
   TASK          what "done" is
-  PROCESS       order of tools / checks (short)
+  PROCESS       order of tools and checks (short)
   CONSTRAINTS   length, safety, what not to invent
-  I/O           schema or "the SDK type owns this"
-  EXAMPLES      only if the type is still ambiguous
+  I/O           the schema, or "the SDK type owns this"
+  EXAMPLES      only while the type is still ambiguous
 ```
 
-If a block cannot be named with one of those labels, it is probably layer 4
-(facts) or layer 3 (a planning protocol) in the wrong house.
+A block that cannot take one of those labels is a fact, or a planning protocol, sitting in the persona by mistake.
 
-### Thinking like an LLM
+## 7. Persona defects
 
-The useful analogy is not "talk to a genius." It is brief a competent new
-hire who has no memory of your company and no eyes except the tokens you
-pass. They have read the public internet of the training cutoff. They have
-not read your Jira. They will fill gaps with something that sounds like your
-industry.
+Prompt failures are defects in this layer. They are boring, and they are readable.
 
-Write the task as you want it executed. "When you research X, always consider
-Y and Z" is closer to what will happen than "be thorough." You can describe a
-small workflow in the persona: fetch sources, filter to allowed ones, emit
-five tasks. The model will often follow that flowchart — until a tool returns
-something ugly. Then you need the real loop (tools, observations, a
-termination condition), a longer flowchart in prose.
+1. **Too complicated**: One persona researches, writes, cites, refuses medical advice, jokes, and speaks two brands. Instructions collide, the window fills, and the model satisfies a random subset. Split by role: two agents and a handoff, or one agent with one job. Stopping when that job is done is a feature.
 
-A prompt that assumes shared context — "use the usual sources," "follow our
-style," "you know what I mean by urgent" — fails silently. Put the definition
-in tokens. Names of sources. A one-line style rule. A severity rubric. If it
-must change weekly, it is not a persona constant; retrieve it.
+2. **Contradictory**: "Be concise" beside "explain like a textbook." "Never mention competitors" beside "compare the market." The sampler picks a side. Read the blob the model sees, top to bottom, including defaults the SDK injects. Add an explicit priority bullet and delete the loser.
 
-Specificity is not the same as length. "Time-travel story, 1921, five
-paragraphs, humorous first person" is specific and short. A two-page essay on
-"what good research means" is long and still vague. Prefer testable clauses:
-counts, lists, "only from the tool result," "if the tool errors, say so."
+3. **Too simple**: "Help the user" plus twelve tools. The agent either chatters (many tiny calls, latency, a bill) or guesses and calls nothing. Write the process ("call X before Y") or cut tools until the set matches the persona. A long verb list is not agency.
 
-Untrusted text (web pages, tickets, PDFs, other agents) will appear inside
-the same window. Thinking like an LLM means assuming that text can look like
-instructions. Delimit it. Tell the persona that content inside a `USER` or
-`TOOL` region is data. The full threat model for deployment is larger; the
-habit starts when you write the first delimiter.
+4. **Ambiguous delimiters**: `"""`, markdown fences, and XML tags mixed until user text can close a fence and write a new system line. Pick one style. Feed it user text that contains backticks and confirm the wrapper still holds.
 
-### Common pitfalls
+5. **Unspecified output**: Free prose into the next agent. Comma-separated, or a list, or JSON, until Thursday. Type the object. If you cannot type it yet, specify a grammar a person could check in five seconds.
 
-Prompt work fails in a handful of boring ways. Treat them as defects in
-layer 1, not as model mystery.
+6. **Examples that fight the rules**: A few-shot that ignores the length cap, or that calls a tool the production agent does not have. Examples are prompts. Keep them legal. Delete them when the schema is enough.
 
-**Too complicated.** One persona tries to research, write, cite, refuse
-medical advice, joke, and speak two brands. The window fills, instructions
-collide, cost goes up, and the model satisfies a random subset. Split by
-role. That may be two `Agent`s and a handoff, or one agent with a narrower
-job. "Do one kind of work, then stop" is a feature.
+7. **Junk drawer**: A changelog, an API key, a temporary debug line, a Slack policy pasted in. A secret is an environment variable. A fact that ages is retrieval. A debug flag is a trace attribute.
 
-**Contradictory instructions.** "Be concise" next to "explain like a
-textbook." "Never mention competitors" next to "compare the market." The
-sampler must pick. You will not like the pick. Read the prompt as the model
-sees it: one blob, top to bottom, including defaults the SDK injects. Resolve
-clashes with an explicit priority bullet. Delete the loser.
+### Watch for
 
-**Too simple.** "Help the user" plus twelve tools. The agent either chatters
-(many tiny calls, latency, bill) or guesses without calling anything. Either
-enrich the process section ("call X before Y") or cut tools until the
-remaining set matches the persona. Agency is not "maximum verbs."
+* "Be concise but thorough, never guess, and use any tools you need to delight the user" is contradictory and too simple at once. A replacement a trace can falsify names the tool, the count, and the source of facts: "Call `get_research_sources` first. Emit five tasks. Use only names from that list."
+* A clash you cannot see in your file can still be in the blob. SDK-injected defaults sit in the same prompt.
 
-**Ambiguous delimiters.** Mixing `"""`, markdown fences, and XML tags until
-user input can close a fence and write a new system line. Pick one delimiter
-style. Show an example of user text that contains backticks and make sure
-your wrapper still holds. This is the cheap cousin of injection defense.
+## 8. Agent, Runner, and pinned settings
 
-**Unspecified output.** Free prose into the next agent. Comma vs list vs
-JSON. The downstream prompt "usually" parses it until Thursday. Typed
-outputs (next section). If you cannot type it yet, specify a grammar a human
-could check in five seconds.
-
-**Examples that fight the rules.** Few-shots that ignore the length cap, or
-that call a tool the production agent does not have. Examples are prompts.
-Keep them legal. Delete them when the schema is enough.
-
-**Persona as a junk drawer.** Changelog, API keys, "temporary" debug lines,
-copied Slack policy. If it is a secret, it is not a prompt. If it is a fact
-that ages, it is memory or retrieval. If it is a debug flag, it is a trace
-attribute.
-
-## Building with the OpenAI Agents SDK
-
-Plenty of frameworks exist. This track standardizes on the **OpenAI Agents
-SDK** because it is small: an `Agent` is instructions plus model settings
-plus tools; a `Runner` executes the loop; traces are first-class. Protocols
-(MCP, later A2A) are how you stay portable around that choice. You can
-mentally translate every listing here into "persona + sampler + tool runtime
-+ trace" on another stack.
-
-You will not learn the SDK by memorizing class names. You will learn it by
-noticing what each constructor argument **owns**.
-
-### A minimal agent
-
-A first agent in this book-shaped workshop is usually a **research planner**:
-topic in, a short plan out. That is deliberate. It forces you to write a
-persona, run a completion, and look at tokens before you drown in tools.
-
-The moving parts:
+The **OpenAI Agents SDK** stays small on purpose. An `Agent` is instructions, model settings, and tools. A `Runner` executes the loop. Traces are first-class. On another stack the same four pieces are persona, sampler, tool runtime, and trace. A shared protocol such as MCP is how a tool stays portable around that choice. Learn each constructor argument by what it owns.
 
 ```
-  load credentials (.env) -- not in the prompt, not in git
+  credentials in the environment     not in the prompt, not in git
        |
        v
-  instructions = """ persona: role, task, constraints """
+  instructions = the persona
        |
        v
   agent = Agent(name=..., instructions=...)
@@ -401,268 +181,122 @@ The moving parts:
   result = Runner.run_sync(agent, input=user_text)
        |
        v
-  result.final_output     # still a string unless you type it
+  result.final_output                a string until you type it
 ```
 
-This looks like an agent in a demo, so it ships as one. Label it honestly.
-With no tools and no loop beyond one completion (or a hidden inner sample
-loop that only emits text), you have a **prompt step**. Prompt chaining —
-several such steps in code you wrote — is a valid workflow. It is not yet
-agency. Agency is the model choosing a registered tool and the runtime coming
-back. Keep the planner; add tools before you name the product "agent."
+* **Name**: Name the agent after the role. Traces show this string. A first build in this shape is a research planner: a topic in, a short plan out. That forces a persona and a look at tokens before tools drown the picture.
+* **`instructions` vs `input`**: Instructions are the persona. `input` is the user goal. Policy you find yourself stuffing into `input` belongs in `instructions` or in a tool.
+* **An honest label**: No tools, and no loop beyond one completion, means a prompt step. Several such steps in code you wrote is prompt chaining. It is a valid workflow. The word *agent* waits until a trace shows the model choosing a registered tool and the runtime coming back with an observation.
+* **Sync and async**: `Runner.run_sync` is enough for scripts and tests. Async shows up when a server is hosted over SSE, or when several tools are in flight.
+* **Secrets**: Load them from the environment. Pasting a key into instructions to make a demo run puts the key in the prompt and in the trace.
 
-What to get right even at this stage:
+Each constructor argument owns one job. Memorizing class names teaches less than noticing the owner.
 
-- **Name** the agent after the role, not after the company. Traces and later
-  multi-agent graphs will show this string.
-- **Instructions are the persona.** Put TASK where a tired reader sees it.
-  Use delimiters. Specify "five concise tasks" if that is the contract.
-- **`input` is the user goal**, not a second system prompt. If you find
-  yourself stuffing policy into `input`, it belongs in `instructions` or in
-  a tool.
-- **Runners** exist in sync and async forms. Sync is fine for scripts and
-  tests. Async shows up the moment you host MCP over SSE or wait on multiple
-  tools.
+* **`name`**: The string traces show. Use the role.
+* **`instructions`**: The persona. Task, constraints, tool order.
+* **`model`**: The pinned id. Leave it empty and the account default is free to move.
+* **Model settings**: Temperature, max tokens, penalties, reasoning effort. They belong to this agent.
+* **`tools`**: The schemas available on this hop.
+* **`output_type`**: The object contract. One source of truth, in the constructor.
+* **`input` on the runner**: The user goal for this run, not a second persona.
 
-Environment setup and sample repos are the book's appendix territory. Do not
-paste secrets into instructions to "make the demo work."
+Omit the model and you get whatever the SDK or the account currently defaults to. That default moves. The eval set does not. Pin the model id on the agent.
 
-### Model and parameters
+* **Settings belong to the agent**: A planner, an extractor, or anything a test snapshots: `temperature` at 0, or as close as the vendor allows, and a modest `max_tokens` matched to the schema. A writer: a higher temperature, and still a cap. Reasoning effort stays none or minimal on short hops.
+* **Do not share one mutable settings object**: One `ModelSettings` instance that every agent mutates makes traces lie. Settings are part of the agent's identity. Copy a baseline if you need a shared starting point. When an eval fails, the trace should show *this* agent's model, temperature, and max tokens.
+* **A model-family change is a release**: Tokenizers differ. Tool-call formats differ. A cheaper model is a different experiment from "it still emits five tasks." Pin, measure, then swap.
+* **Declare, then let a platform route**: This chapter owns the declaration: model family, sampling, max tokens, effort. A platform that picks a provider from that declaration is a different job. "The org default, unless this agent needs vision" mixes them. The role's need is the declaration. Choosing the provider at runtime is routing. Collapsing the two makes every team rebuild routing.
 
-If you omit the model, you get **whatever the SDK / account currently
-defaults to**. That default will move. Your eval set will not. Pin the model
-id.
+## 9. Typed outputs and traces
 
-Attach sampling on the agent, not "somewhere in the HTTP client":
-
-- Planner / extractor / anything you snapshot in tests: `temperature` at 0
-  (or as close as the vendor lets you), modest `max_tokens` matched to the
-  schema.
-- Writer / idea generator: higher temperature, still a max.
-- Reasoning-effort: **none or minimal** on short hops; raise only on the
-  step that needs deliberation.
-
-One shared `ModelSettings` object mutated by every agent in the process is
-how traces lie. Settings are part of the agent's identity. Copy explicitly if
-you must share a baseline. When an eval fails, you want to read the trace and
-see *this* agent's model, temperature, and max tokens, not a global that
-changed in another file.
-
-Changing model family is a **release**. Tokenizers differ. Tool-call formats
-differ. "It got cheaper" is not the same as "it still emits five tasks." Pin,
-measure, then swap — the same rule that applies to prompts and retrieval.
-
-A note on "we will route in production." Routing is real. Here you learn to
-**declare** what a role needs: model family, sampling, max tokens, effort.
-The platform that chooses a provider from that declaration is a different
-job. This chapter owns the declaration.
-
-### Controlling inputs and typed outputs
-
-LLMs emit tokens. Downstream code wants objects. If you glue those worlds
-with split-on-comma, you will spend the rest of the workshop debugging the
-glue.
-
-Agent A's prose is agent B's input. Variability that was charming in a demo
-("here are some ideas!") becomes a parse error, a missed field, or a silently
-truncated list. Declare a schema (Pydantic models, TypedDicts, whatever the
-SDK accepts as `output_type`). Make the runner **fail the completion** if the
-object does not validate. Then pass the object, not a string, to the next
-hop.
+The model emits tokens. The next hop wants an object. Charming prose ("here are some ideas!") becomes a parse error, a missed field, or a silently truncated list.
 
 ```
   without types:
-    planner --> "1. foo\n2. bar..." --> regex / hope --> next agent
+    planner --> "1. foo\n2. bar..." --> regex, then hope --> next agent
 
   with types:
     planner --> { tasks: [ {step, text}, ... ] } --> next agent
-                ^
-                validated, same keys every time
+                same keys every time, or the completion fails
 ```
 
-What belongs in the type:
+* **`output_type`**: A schema the SDK accepts, such as a Pydantic model or a TypedDict. The runner fails the completion when the object does not validate. Pass the object onward. `result.final_output` stays a string until you do this.
+* **Fields that earn a slot**: Only fields the next agent or the UI will read. Types that match reality (`HttpUrl`, an enum of allowed sources) constrain the sampler. `str` for everything does not. Field descriptions are prompt fragments: short, and operational. The model sees them.
+* **Fields that do not**: A restatement of the persona. Optional fields "just in case." Optionality is where the model skips the work.
+* **Typed inputs**: A previous hop or a tool that returns a list should pass the list. Stringifying it so the planner can re-parse it is another chance for the fact to mutate.
+* **A validation error is a trace event**: The completion failed the schema. Fix the cause. Retrying the same prompt teaches you to ignore a broken contract.
+* **Causes you will actually see**: `max_tokens` cut the object off. The persona still says "reply as markdown." Temperature is high enough to wander off the schema. The model is too small for the type. `output_type=ResearchPlan` beside "reply as markdown" is two sources of truth. Inspect the instructions and the type first.
+* **Strings become fake routing bugs**: The next hop, given prose, fails in ways that look like a bad handoff. The failure is the untyped string. A typed object removes that class of bug.
 
-- Fields the **next agent or the UI** will read. If nobody reads it, do not
-  ask the model to invent it.
-- Types that match reality (`HttpUrl`, enums of allowed sources), not `str`
-  for everything. Constraining the sampler is the point.
-- Docstrings / field descriptions — models see them. Write them like prompt
-  fragments: short, operational.
+If you cannot see the prompt the model actually received — system text, tools, user text, prior tool payloads — you are guessing. The SDK turns tracing on by default for the OpenAI API. The vendor dashboard is enough to learn the shape: one **trace** for the run, **spans** for model calls and for tool calls.
 
-What does not belong:
+* **Model and settings on the span**: What fired, including a default you did not mean to pin.
+* **Token counts**: Input and output. The first cost signal and the first sign the window is filling.
+* **Instructions blob**: The persona that ran. A stale deploy and the wrong agent name both show up here.
+* **Output**: For a typed agent, the parsed object and any repair the SDK attempted before it failed the schema.
+* **Tool spans**: Name, arguments, observation, latency, error.
+* **Name the scenario**: Wrap the run in `trace("chapter2-planner-tools")`, not `trace("test")`. You will grep these names. Traces contain user text and tool payloads. Turning them off or exporting them in CI is a data-handling choice.
+* **The idea survives a second provider**: A dashboard that exists for one vendor, and only when someone clicks, will not. The fields you keep are the same: the run, the spans, the actual prompt, the actual settings, the actual tool observation. A second provider means an external trace store that holds those fields. Learn the shape here so you know what to put in it.
 
-- Restating the entire persona. The schema is the I/O contract, not the role.
-- Optional fields "just in case." Optionality is where the model skips work.
+## 10. Registering a tool
 
-Typed **inputs** matter when a previous hop or a tool returns structure. Do
-not stringify a list of sources and hope the planner re-parses it. Pass the
-list. The fewer times a fact becomes prose and back, the fewer times it
-mutates.
+A **tool** is a function plus a schema the model can see: a name, a description, and typed arguments. Prompt chaining can only follow the path you wrote. A tool lets the model branch: fetch, read the observation, then decide. That branch is the smallest agency this chapter cares about.
 
-When validation fails, that is a **trace event**, not a retry storm with the
-same prompt. Typical causes: `max_tokens` too low, persona still asking for
-markdown, temperature too high, model too small for the schema. Fix the
-cause. Blind retries train you to ignore a broken contract.
-
-Multi-agent graphs assume this habit. If you skip types here, you will
-"debug handoffs" for a week when you are actually debugging strings.
-
-### Tracing
-
-If you cannot see the prompt the model *actually* received — system, tools,
-user, prior tool payloads — you are guessing. The OpenAI Agents SDK turns
-tracing on by default when you talk to the OpenAI API. The vendor dashboard
-is enough to learn the shape: one **trace** for the run, **spans** for LLM
-calls and later for tools.
-
-Look at, every time, until it is boring:
-
-- Which **model** and **settings** fired (not which you *meant* to pin).
-- **Token counts** in and out. This is your first cost and window signal.
-- The **instructions** blob. Confirm the persona you edited is the one that
-  ran (no stale deploy, no wrong agent name).
-- The **output**. For typed agents, the parsed object *and* any repair/retry
-  the SDK did.
-- Later: **tool calls** (name, args, observation, latency, error).
-
-Tracing only in the vendor UI, only on OpenAI, only when someone remembers to
-click, will not survive a second provider. Learn the dashboard in this chapter
-so the *idea* is in your hands. For production, multi-provider, or regulated
-shops, plan an external trace store. Here you only need: wrap the run in a
-named `trace(...)`, read it, change one thing.
-
-Name traces after the scenario (`"chapter2-planner-tools"`), not `"test"`.
-Six months from now you will grep these names. Disable or export carefully in
-CI: traces can contain user text and tool payloads. That is a data-handling
-choice, not a dashboard preference.
-
-## Tool integration
-
-Tools are how layer 2 gets into code. A tool is a function plus a **schema**
-the model can see: name, description, typed arguments. Actions are what
-happen when the runtime executes a chosen call.
-
-Without tools you can chain prompts. With tools the model can **branch**:
-fetch, then decide. That is the smallest agency this track cares about.
-
-### Providing agents with tools
-
-In this chapter, tools are **in-process functions** registered on the `Agent`
-(`tools=[...]`, often via a decorator that builds the schema from the
-signature and docstring). Later, the same idea is a server another host can
-load. Same contract, different process boundary.
+Here the tools are in-process functions on the `Agent` (`tools=[...]`), often built by a decorator from the signature and the docstring. The same contract can live in another process that a host loads. Either way the model emits a call, and something you run returns the observation.
 
 ```
   def get_research_sources() -> list[str]:
       """Return the allow-listed research sources for this agent."""
-      ...
 
-  Agent(..., tools=[get_research_sources], instructions="""...
-        Call get_research_sources before you plan.
-        Only plan against that list.
-        ...""")
+  Agent(..., tools=[get_research_sources],
+        instructions="Call get_research_sources before you plan. "
+                     "Only plan against that list.")
 ```
 
-The docstring **is** the prompt for that tool. Write it for the model: when
-to call, what the args mean, what you will get back. Cute one-liners that
-please a linter are how the model calls the wrong verb.
+* **The docstring is the tool's prompt**: When to call, what the arguments mean, what comes back. A one-liner written for a linter is how the model picks the wrong verb.
+* **One job**: `get_research_sources` and `get_resource_url` compose. `do_research(magic: str)` cannot be guarded, because you cannot say what it is allowed to touch.
+* **A short list**: Every schema is billed on every turn and competes for attention. Fifteen tools and a vague persona is an under-specified model.
+* **Mention the tool in the persona**: Registration puts the schema in context. The process section is why the model calls it. "Look up the URL per source" is a reason to call the second tool.
+* **Return a structured failure**: Timeouts, empty lists, HTTP 429s, and surprising shapes should come back as text the model can read. The persona says whether to replan, tell the user, or stop. A demo that only returns happy JSON leaves that choice unwritten.
+* **Descriptions are public**: A secret in a docstring lands in the prompt and in the trace.
+* **A handoff is the same shape**: In some graphs the model names another agent the way it names a function. The runtime performs the transfer. A registry of agents, credential storage, and circuit breakers are platform work. You still own the schema and the observation.
 
-Design rules that save pain:
+## 11. Reading a tool trace
 
-- **One job per tool.** `get_research_sources` and `get_resource_url` beat
-  `do_research(magic: str)`. Small tools compose; god-tools cannot be
-  guarded.
-- **Keep the list short.** Every schema burns tokens on every turn and
-  competes for attention. A confused model with fifteen tools is under-
-  specified.
-- **Persona must mention the tools that matter.** Registration is necessary,
-  not sufficient. If the process says "look up the URL per source," the model
-  has a reason to call the second tool.
-- **Own failure.** Timeouts, empty lists, 429s, unexpected shapes: return a
-  structured error the model can read, and tell the persona what to do
-  (replan, tell the user, stop). A demo that only shows happy JSON is still
-  chapter 1's warning.
-- **Do not put secrets in tool descriptions.** They will be traced and they
-  will leak into prompts.
-
-Handoffs to other agents are also "tools" in some graphs. Platform registries,
-credentials, and circuit breakers sit outside this chapter. Here you own the
-function, the schema, and the observation.
-
-A planner that must only use allow-listed sources is the teaching example for
-a reason. If the tool says Wikipedia / Google / YouTube and the plan cites
-arXiv, learn failed: either the tool was not called, the observation was
-ignored, or the persona did not constrain the act. Tracing tells you which.
-
-### Tracing tool use
-
-Once two tools exist and one depends on the other, traces stop being optional.
-
-"It didn't use the URL tool" is reported as a model quality issue. Sometimes
-it is a prompt issue. Sometimes the first tool's observation was too huge.
-Sometimes the schema misnamed an argument. Sometimes `max_tokens` ate the
-tool-call JSON. Read the span. You want a story like:
+Two tools, one depending on the other, make the span the only honest record. "It didn't use the URL tool" might be the persona, a huge observation, a misnamed argument, or a token cap that ate the tool-call JSON.
 
 ```
-  LLM 1  -->  tool get_research_sources()
+  LLM 1  -->  get_research_sources()
          <--  ["Wikipedia", "Google", "YouTube"]
-  LLM 2  -->  tool get_resource_url(name="Wikipedia")
+  LLM 2  -->  get_resource_url(name="Wikipedia")
          <--  "https://..."
-  LLM 3  -->  (optionally more URLs)
-  LLM n  -->  final typed plan that only names those sources
+  LLM n  -->  typed plan that only names those sources
 ```
 
-If LLM 1 already emits the plan, the persona's "begin by using the tool" is
-dead letter. If the tool is called with `name="wiki"`, the description or
-enum is weak. If the observation is an exception traceback dumped as a
-string, you handed the model a new prompt injection surface.
+* **The plan appears at LLM 1**: "Begin by using the tool" never fired. The persona is a dead letter, or the sampler ignored it. The span shows no tool call.
+* **`name="wiki"`**: The description or the argument enum is too loose. The call happened, and the argument is wrong.
+* **arXiv in the plan**: The tool returned Wikipedia, Google, and YouTube. Either the tool was not called, the observation was ignored, or the persona did not constrain the act. Match the cited name against the observation in the span.
+* **A traceback as the observation**: The model received a new pile of text that can look like instructions. Return a structured error instead.
+* **A guaranteed order is written down**: A's output as B's argument is how one persona becomes a small graph, and how latency adds. Two unrelated docstrings will not invent the sequence. Say the order in the persona.
+* **One change, then read the span**: You can score "did it call the right tool?" only after the call is visible. A ghost call has no score.
 
-Wrap the `Runner` in an explicit `trace("...")` when you are comparing runs.
-Change **one** thing: instructions, tool docstring, temperature, or schema.
-One change per experiment is how you learn which lever moved.
+Change one lever and read the next span. Two levers in one run leave you with a difference and no cause.
 
-Tool chaining (A's output is B's argument) is powerful and is how agents
-become graphs inside a *single* persona. It is also how latency multiplies.
-If you need a guaranteed sequence, you can still say so in the persona; do
-not assume the model will invent the sequence from two unrelated docstrings.
-
-Eval of "did it call the right tool?" belongs in a later evaluation chapter.
-Your job now is to **see** the call. You cannot score a ghost.
+* **Instructions**: LLM 1 starts calling the tool, or it still emits the plan immediately.
+* **Docstring**: The argument stops arriving as `wiki` and starts arriving as a name the tool actually returns.
+* **Temperature**: The typed plan stops adding a source that was not in the observation.
+* **Schema**: An enum of allowed names makes `wiki` an invalid argument before the sampler has to guess.
+* **`max_tokens`**: The tool-call JSON is cut off in the span. Raise the cap to the size of the call, then rerun. A second prompt edit will not repair a truncated call.
 
 ## Check yourself
 
-1. A teammate says the planner is "non-deterministic because LLMs are
-   random." Which box in this chapter's pipeline is actually drawing the
-   token, and what would you set (and pin) before you agreed the *model* was
-   the problem? Give a real job (planner vs copywriter) where you would want
-   leftover randomness.
-2. You paste a 2 KB JSON blob and a 2 KB paragraph of the same facts into a
-   tokenizer. Why can the JSON cost more, and what does that do to a
-   tool-heavy agent that re-sends schemas every turn?
-3. Temperature is 0.2 and top-p is 0.1 on the same agent, changed in one
-   deploy, and the eval moved. Why can you not say which knob helped? What
-   experiment would you run instead?
-4. A "thinking" model's default reasoning effort is high. Your agent does
-   eight tool hops to file a ticket. What fails if you leave the default,
-   and which hops might still deserve more effort?
-5. Rewrite this persona defect: "Be concise but thorough, never guess, and
-   use any tools you need to delight the user." Name the pitfall class
-   (complicated / contradictory / too simple / …) and a replacement that a
-   trace could falsify.
-6. Why is a minimal `Agent` with only `instructions` not yet an agent in the
-   sense of sense-plan-act-learn? What extra loop would have to show up in a
-   trace before you would use the word in a design review?
-7. You add `output_type=ResearchPlan` but the instructions still say "reply
-   as markdown." A downstream agent sometimes gets markdown anyway. What two
-   places do you inspect first, and what does a validation error mean that a
-   retry will not fix?
-8. The vendor trace UI shows a completion but you are mid-migration to a
-   second model provider. What does this chapter still give you about the
-   *idea* of a trace, and what do you need to plan for production?
-9. `get_research_sources` is registered; the plan cites a source not in the
-   list. Walk the failure as persona vs schema vs observation vs sampling.
-   What would the trace have to show for each?
-10. You want "the org default model, unless this agent needs vision." Which
-    part of that sentence is declaring what a role needs (this chapter), and
-    which part is choosing a provider at runtime? Why does collapsing them
-    make every team reimplement routing?
+1. A teammate says the planner is non-deterministic because LLMs are random. Which box in the pipeline draws the token, and what do you pin before you agree the model weights are the problem? Name one job where leftover randomness is the point, and one where it is not.
+2. You tokenize a 2 KB JSON blob and a 2 KB paragraph of the same facts. Why can the JSON cost more, and what does that do to an agent that re-sends tool schemas every turn?
+3. Temperature is 0.2 and top-p is 0.1, both changed in one deploy, and the eval moved. Why is there no attribution? What experiment do you run instead?
+4. A thinking model's default reasoning effort is high. The agent takes eight tool hops to file a ticket. What do you pay if you leave the default, and which hops still deserve more effort?
+5. This persona is broken: "Be concise but thorough, never guess, and use any tools you need to delight the user." Name the defect classes and write a replacement a trace could falsify.
+6. Why is an `Agent` with only `instructions` still a prompt step? What must show up in a trace before you use the word *agent* in a design review?
+7. You set `output_type=ResearchPlan`, and the instructions still say "reply as markdown." A downstream hop sometimes receives markdown. Which two places do you inspect first, and what does a validation error mean that a retry of the same prompt will not fix?
+8. The vendor trace UI shows a completion, and you are adding a second model provider. Which fields of a trace are the idea you keep, and what do you plan so those fields exist for both providers?
+9. `get_research_sources` is registered. The plan cites a source that is not in the returned list. What would the trace show if the cause were the persona, the schema, the observation, or the sampler?
+10. Someone says "use the org default model, unless this agent needs vision." Which half of that sentence is the role's declaration, and which half is choosing a provider at runtime? What do you lose by collapsing them?

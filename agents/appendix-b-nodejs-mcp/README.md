@@ -1,20 +1,10 @@
 # Appendix B. Node.js for local MCP
 
-Companion notes for **Appendix B** of *AI Agents in Action* (2nd edition,
-Micheal Lanham; Manning, 2026).
+Companion notes for **Appendix B** of *AI Agents in Action* (2nd edition, Micheal Lanham; Manning, 2026).
 
-Most official MCP servers you will actually type in a config are
-**Node programs launched with `npx`**. Python runs the agent. Node runs
-the **local tool process** on STDIO. Skip this appendix and MCP will look
-like a protocol with no sockets: `npx: command not found`, a silent hang
-on first launch, or a filesystem server that cannot see the folder you
-meant.
+Most official MCP servers you type into a config are Node programs launched with `npx`. Python runs the agent. Node runs the local tool process on STDIO. Without Node on the PATH of the process that spawns the server, you get `npx: command not found`, a silent hang on first launch, or a filesystem server pointed at the wrong folder. A Node that works in your terminal and fails in the debugger, the editor, or a systemd user session is a different machine as far as MCP is concerned.
 
-This folder is install, verify, cache, one reference server, wiring, and
-hygiene. It is the hands-on companion to MCP protocol material: how the
-local process actually starts.
-
-## What you are setting up
+## 1. What you are setting up
 
 ```
   agent / host (Python SDK, Claude Desktop, IDE)
@@ -27,38 +17,21 @@ local process actually starts.
   Node process  +  npx download cache
 ```
 
-The one sentence: **`node` and `npx` must be on the PATH of the process
-that spawns the server** — a Node that works in *your* terminal but not
-in the debugger, Cursor, or systemd user session is a different machine
-as far as MCP is concerned.
+* **Who spawns whom**: The host (a Python SDK, Claude Desktop, or an IDE) spawns `npx`. The Node process speaks JSON-RPC on STDIO.
+* **PATH is per process**: `node` and `npx` have to be on the PATH of the spawning process. A terminal you opened by hand can see a Node the debugger cannot.
 
-## Install Node (Windows, macOS, Linux)
+## 2. Install Node
 
-You want a **current LTS** Node, not a random 14.x from 2020. MCP servers
-and `npx` package manifests assume a modern runtime. Installers and docs
-live at [nodejs.org](https://nodejs.org/).
+You want a **current LTS** Node, not a random 14.x from 2020. MCP servers and `npx` package manifests assume a modern runtime. Installers and docs live at [nodejs.org](https://nodejs.org/).
 
-**Windows.** Use the LTS installer from nodejs.org, or `winget install
-OpenJS.NodeJS.LTS`. Close and reopen the terminal (and the editor) so
-PATH updates. Git Bash, PowerShell, and cmd can disagree; verify in the
-same shell you will use to run samples.
+* **Windows**: Use the LTS installer from nodejs.org, or `winget install OpenJS.NodeJS.LTS`. Close and reopen the terminal and the editor so PATH updates. Git Bash, PowerShell, and cmd can disagree. Verify in the same shell you will use to run samples.
+* **macOS**: Official LTS installer, Homebrew (`brew install node`), or nvm / fnm if you already manage versions. Apple Silicon versus Intel is the installer's problem. Mixed Homebrew prefixes are yours. `which node` should be one path.
+* **Linux**: Distro packages are often stale. Prefer NodeSource, nvm, fnm, or the official binaries over `apt install nodejs` from a two-year-old Ubuntu without checking the version. A Snap or flatpak Node can be invisible to an editor launched from the desktop menu.
+* **Corporate laptops**: You may need a blessed installer. The requirement is the same: a Node that `npx` can drive.
 
-**macOS.** Official LTS installer, Homebrew `brew install node`, or nvm /
-fnm if you already manage versions. Apple Silicon vs Intel is the
-installer's problem; mixed Homebrew prefixes are yours — `which node`
-should be one path.
+## 3. Verify `node` and `npx`
 
-**Linux.** Distro packages are often **stale**. Prefer NodeSource, nvm,
-fnm, or the official binaries over `apt install nodejs` from a two-year
-old Ubuntu without checking the version. Snap/flatpak Node can be
-invisible to an editor launched from the desktop menu.
-
-Corporate laptops: you may need a blessed installer. The requirement does
-not change — **a Node that `npx` can drive**.
-
-## Verify `node` and `npx`
-
-In the same terminal you will use for the book:
+In the same terminal you will use for the samples:
 
 ```bash
 node -v
@@ -67,146 +40,93 @@ which node
 which npx
 ```
 
-You want a v20 or v22 LTS (or whatever the server's engine field
-requires — if `npx` prints an engine warning, believe it). `npx` ships
-**with** npm/Node; if `node` works and `npx` does not, PATH or a broken
-npm install is the bug, not MCP.
+* **Version**: You want a v20 or v22 LTS, or whatever the server's `engines` field requires. If `npx` prints an engine warning, believe the warning.
+* **`npx` ships with Node**: If `node` works and `npx` does not, PATH or a broken npm install is the bug.
+* **Windows**: Use `where node` and `where npx`. If the editor's integrated terminal shows different paths than iTerm or Windows Terminal, fix the editor's environment before you debug the Python agent.
+* **First download**: The first `npx` of a package downloads and needs a network. Offline CI fails unless you pre-cache that package.
 
-Windows: `where node` and `where npx`. If the editor's integrated
-terminal shows different paths than iTerm/Windows Terminal, fix the
-editor's environment before debugging Python.
+## 4. Understand the npx cache
 
-First `npx` of a package **downloads**. That needs network. Offline CI
-will fail unless you pre-cache.
+`npx -y some-package` fetches a package into a cache (npm's cache plus npx's installer metadata). The second run is faster. The first run can look like a hang.
 
-## The npx cache
+* **Cache owner**: The user that spawns MCP (you, a CI user, a service account) owns the cache directory. Root, your user, and the debugger can mean three caches.
+* **Half-written cache**: A poisoned or half-written cache looks like a flaky server. It is often a zip that did not finish.
+* **`-y`**: The flag skips the prompt so a headless agent does not freeze on "Ok to proceed?" An interactive npx prompt inside a spawn waits forever.
+* **Two facts worth keeping**: Clearing the cache is a valid fix. "Works after lunch" was the download finishing.
 
-`npx -y some-package` fetches a package into a **cache** (npm's cache
-plus npx's installer metadata). The second run is faster. The first run
-can look like a hang.
+## 5. Run the filesystem server
 
-Implications for agents:
+The local smoke test is the official filesystem server. It exposes a directory as tools: read, list, and sometimes write. Treat write as dangerous.
 
-- The **user** that spawns MCP (you, a CI user, a service account) owns
-  the cache directory. Root vs developer vs debugger can mean three
-  caches.
-- A poisoned or half-written cache looks like "MCP is flaky." It is
-  often a zip that did not finish.
-- `-y` skips prompts so a headless agent does not freeze on "Ok to
-  proceed?" Never rely on an interactive npx prompt inside a spawn.
-
-You do not need to memorize cache paths. You need to know **clearing it
-is a valid fix** (below) and that "works after lunch" was the download
-finishing.
-
-## Running the filesystem MCP server
-
-The canonical local smoke test is the official filesystem server: it
-exposes a directory as tools (read, list, sometimes write — **treat write
-as dangerous**).
-
-Conceptually (package name as published by the MCP project; if a listing
-uses a slightly different npm name, follow the listing):
+The package name below is the one published by the MCP project. If a listing uses a slightly different npm name, follow the listing.
 
 ```bash
 npx -y @modelcontextprotocol/server-filesystem /path/you/allow
 ```
 
-Pick a **sandbox directory**, not `$HOME` and not `/`. Chapter samples
-that search a repo should be pointed at that repo or a `data/` folder,
-not at the whole disk. STDIO MCP still has **your credentials and your
-files** — treat the allowed root as a mini threat model.
+* **Sandbox directory**: Point the server at a sandbox directory, not `$HOME` and not `/`. A sample that searches a repo should use that repo or a `data/` folder, not the whole disk. A STDIO server still has your credentials and your files. Treat the allowed root as a small threat model.
+* **Healthy idle**: A healthy run waits on STDIO and looks idle. That is the server. JSON-RPC from a client is what makes it print. An immediate exit means the path argument is wrong or Node threw. Run the same command in a terminal and read stderr.
+* **Same shape, other packages**: A memory-graph server is the same class of process: `npx`, a package, and a place it persists JSON. Same PATH, same cache, same first-run download.
 
-A healthy run waits on STDIO (it looks idle). That is the server. JSON-RPC
-from a client is what makes it print. If it exits immediately, the
-argument path is wrong or Node threw — run the same command in a
-terminal to see stderr.
+## 6. Wire the server into a client
 
-Memory graph servers used later in the book are the same class of
-process: `npx` plus a package, plus a place they persist JSON. Same PATH,
-same cache, same "first run downloads."
+* **Python Agents SDK**: Use `MCPServerStdio` (or the current SDK equivalent) with `command="npx"` and `args` that match the command you already ran by hand. The Python process has to see `npx` on PATH. Debugger launch configs often carry a thin PATH. Inherit the login environment, or set `command` to an absolute `npx`.
+* **Claude Desktop or an IDE**: The JSON config lists `command` and `args`. An absolute path to `npx` keeps the host aligned with the terminal. Restart the host after a PATH change. Hosts do not always pick up a new shell.
+* **MCP Inspector first**: When the agent cannot see tools, Inspector is the right first client. If Inspector lists the tools and the agent does not, the bug is the host config.
+* **Extra shells**: Skip a wrapper shell around `npx` unless you have to have one. Every wrapper is another place for quotes and PATH to break.
 
-## Wiring into a client
-
-**Python Agents SDK.** `MCPServerStdio` (or the current SDK equivalent)
-with `command="npx"` and `args` matching what you typed by hand. The
-Python process **must** see `npx` on PATH. Debugger launch configs often
-have a thin PATH — inherit the login environment or set `command` to an
-**absolute** `npx`.
-
-**Claude Desktop / IDE MCP config.** JSON lists `command` and `args`.
-Absolute paths to `npx` reduce "works in terminal." Restart the host
-after PATH changes; hosts do not always inherit a new shell.
-
-**MCP Inspector** is the right first client when the agent "cannot see
-tools." If Inspector lists tools and the agent does not, the bug is the
-host config, not Node.
-
-Do not wrap npx in extra shells unless you must. Every wrapper is another
-place for quotes and PATH to break.
-
-## Common issues
-
-When a spawn fails, match the symptom to the usual cause before rewriting
-the agent.
+## 7. Match the symptom
 
 | Symptom | Likely cause |
 |---|---|
-| `npx: not found` | Node not installed, or editor PATH |
-| Immediate exit, no tools | Bad args; package name; engine too old |
-| First call times out | Download, firewall, or waiting on a prompt (add `-y`) |
-| Tools exist, reads fail | Allowed directory ≠ the path you think |
-| Works in terminal, fails in F5 | Debugger env / cwd / PATH |
-| Flaky after a crash | Corrupt npx/npm cache |
-| macOS vs Linux CI | Different Node majors; lock the version |
+| `npx: not found` | Node is not installed, or the editor PATH is missing it |
+| Immediate exit, no tools | Bad args, wrong package name, or an engine that is too old |
+| First call times out | Download, firewall, or a prompt waiting for input (add `-y`) |
+| Tools exist, reads fail | The allowed directory is not the path you think |
+| Works in the terminal, fails under F5 | Debugger env, working directory, or PATH |
+| Flaky after a crash | Corrupt npx or npm cache |
+| macOS works, Linux CI fails | Different Node majors; lock the version |
 
-Windows extra: execution policy and "running scripts is disabled" can
-block npm's `.cmd` shims. Use an updated Node installer, not a copy of
-`npx` from a zip without shims.
+* **Windows script policy**: An execution policy of "running scripts is disabled" can block npm's `.cmd` shims. Use an updated Node installer. Copying `npx` out of a zip that has no shims leaves the same block in place.
 
-## Clearing the cache
+## 8. Clear a corrupt cache
 
-When a server "used to work" or extracts throw `ENOENT` / checksum
-errors:
+Use this when a server used to work, or when extracts throw `ENOENT` or a checksum error.
 
 ```bash
 npm cache clean --force
 ```
 
-Then remove npx's installed package leftovers if your npm docs mention
-`~/_npx` or `%LocalAppData%/npm-cache/_npx` (paths vary by npm major).
-Re-run the `npx -y ...` command **once** in a terminal until it sits on
-STDIO. Then retry the agent.
+* **Leftover installs**: Remove npx's installed package leftovers when your npm docs mention `~/_npx` or `%LocalAppData%/npm-cache/_npx`. Those paths vary by npm major.
+* **Re-smoke by hand**: Run the `npx -y ...` command once in a terminal until it sits on STDIO. Then retry the agent.
+* **What the clean fixes**: A partial download. A cache you have to clear every day means the network or the disk is the story.
 
-Clearing the cache is not a personality. It is the fix for a **partial
-download**. If it happens every day, the network or disk is the story.
-
-## Updating Node
+## 9. Update Node
 
 LTS moves. Once or twice a year:
 
-1. Install the new LTS (nvm `install --lts`, brew, or the Windows
-   installer).
-2. `node -v` in **editor and CI**, not only in a random window.
-3. Re-run one filesystem MCP smoke test. Native addons are rare here;
-   engine mismatches are common.
-4. Recreate nothing in Python unless a sample says so — Appendix A's
-   venv is a different runtime. You can update Node without touching the
-   venv.
+1. **Install the new LTS**: `nvm install --lts`, Homebrew, or the Windows installer.
+2. **Check the environments that spawn servers**: Run `node -v` in the editor and in CI, not only in a random window.
+3. **Re-smoke**: Run one filesystem MCP smoke test. Native addons are rare on these servers. An `engines` mismatch is common.
+4. **Leave the Python environment alone**: Recreate the Python virtual environment only when a sample says to. Node and that virtual environment are different runtimes. You can update Node without touching it.
 
-Do not run production MCP on Node odd-numbered currents unless you like
-surprise `engines` failures. LTS is the workshop default.
+* **Stay on LTS**: An odd-numbered current release is a common source of surprise `engines` failures. LTS is the default for this setup.
 
 ## You are done when
 
-- [ ] `node -v` and `npx -v` succeed in the **same** shell you use for
-  samples (v20/v22 LTS or the server's required engine)
-- [ ] Editor / debugger PATH also finds `npx` (or you use an absolute
-  path in the MCP config)
-- [ ] `npx -y @modelcontextprotocol/server-filesystem /path/you/allow`
-  sits on STDIO when run by hand
+- [ ] `node -v` and `npx -v` succeed in the same shell you use for samples (v20 or v22 LTS, or the server's required engine)
+- [ ] The editor and debugger PATH also find `npx`, or the MCP config uses an absolute path
+- [ ] `npx -y @modelcontextprotocol/server-filesystem /path/you/allow` sits on STDIO when you run it by hand
 - [ ] The allowed directory is a sandbox, not `$HOME` or `/`
-- [ ] You know to pass `-y` so a headless spawn never waits on a prompt
-- [ ] You can clear a corrupt cache with `npm cache clean --force` and
-  re-smoke the filesystem server
-- [ ] A Python agent (or MCP Inspector) can list tools from that server
+- [ ] Headless spawns pass `-y`, so they never wait on a prompt
+- [ ] You can clear a corrupt cache with `npm cache clean --force` and re-smoke the filesystem server
+- [ ] A Python agent, or MCP Inspector, can list tools from that server
+
+## Check yourself
+
+1. `node -v` works in your terminal, and the agent reports `npx: not found` under the debugger. What differs between those two processes, and what do you put in `command` so the debugger stops depending on its own PATH?
+2. The first filesystem spawn times out. A second run in the same terminal sits idle on STDIO. What was the first run doing, and which flag keeps a headless spawn from waiting on "Ok to proceed?"
+3. You pointed `@modelcontextprotocol/server-filesystem` at `$HOME` and the server started. What can that process reach, and which directory should a repo sample use instead?
+4. MCP Inspector lists the filesystem tools and the Python agent does not. Which side is broken, the Node install or the host config?
+5. Extracts throw `ENOENT` after a crash mid-download. Which command clears npm's cache, which leftover directory do the npm docs name, and what do you run once by hand before the agent tries again?
+6. After a Node upgrade, a server logs an `engines` warning. Why does recreating the Python virtual environment leave that warning in place?

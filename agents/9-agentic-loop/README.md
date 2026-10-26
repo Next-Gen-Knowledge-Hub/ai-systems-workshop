@@ -1,385 +1,205 @@
 # 9. The agentic loop
 
-Companion notes for **Chapter 9** of *AI Agents in Action* (2nd edition,
-Micheal Lanham; Manning, 2026).
+Companion notes for **Chapter 9** of *AI Agents in Action* (2nd edition, Micheal Lanham; Manning, 2026).
 
-A single agent call that senses, plans, acts, and learns can finish a short
-job. It cannot run a diligence brief across twenty searches, or drain a
-queue of invoices overnight, without losing the plan when the context
-window fills. This chapter treats iteration as a **designed control
-system**: three nested loops that share names people mix in design
-reviews. Skip it and you either one-shot a research brief, or wrap
-`Runner.run()` in `while True` until the bill explains the mistake.
+This chapter establishes iteration as a control system with three nested loops. One sense–plan–act–learn call can finish a short job. It cannot keep a diligence brief across twenty searches, or drain a queue of invoices overnight, once the context window fills. Afterward you can name which loop thinks, which loop stores the campaign, which loop may change the campaign, and which predicate actually stopped the run.
 
-## The mental model
+## 1. Three loops, three jobs
 
-Three layers. Mixing their names is how design reviews go nowhere and
-how agents thrash.
+Mixing the names is how a design review thrashes. Each layer has a different owner and a different horizon.
 
 ```
-  LAYER 3  META LOOP
-           an AGENT holds decide / plan / state
-           subtype: orchestration (hub)  |  collaboration (peers)
-                |
-                |  chooses the next long-horizon move
-                v
-  LAYER 2  TASK LOOP
-           CODE holds plan + state across iterations
-           research-until-done  |  queue-until-empty
-                |
-                |  each iteration is one (or a few) inner cycles
-                v
-  LAYER 1  INNER LOOP  (SPAL)
-           the agent senses, plans, acts, learns
-           until a *short* goal or the caller stops it
+  META LOOP     an agent holds decide / plan / state
+                orchestration (one hub) or collaboration (peers)
+                chooses the next long-horizon move
+                     |
+                     v
+  TASK LOOP     code holds plan + state across iterations
+                research-until-done, or queue-until-empty
+                     |
+                     v
+  INNER LOOP    sense, plan, act, learn
+                until a short goal, or until the caller stops it
 ```
 
-The one sentence to remember a year from now: **the inner loop thinks;
-the task loop remembers the campaign; the meta loop changes the
-campaign.**
+* **Inner loop**: The model thinks. It senses, plans, acts, and learns toward a short goal. One cycle can answer "search this error code."
+* **Task loop**: Your code remembers the campaign. Goal, plan, state, and the stop decision live outside the model so they survive a full window and a process restart. A diligence brief lives here: subtopics, findings, and a gate.
+* **Meta loop**: An agent changes the campaign. It sits on the decide knob. More processes, more MCP servers, or a fancier Compose file do not promote you. If Python still owns every branch, you are on the task loop, which is often what you wanted.
 
-Two consequences fall straight out of that diagram. First, wrapping a
-runner in a `while` is not layer 2 by itself. Layer 2 externalizes
-**goal, plan, state, and the stop decision** so they survive when the
-model's context window does not. Second, layer 3 is not "more agents in
-the YAML." It is an agent (or a team of peers) sitting on the decide
-knob. If Python still owns every branch, you are still on layer 2 —
-which is often what you wanted.
+A `while` around `Runner.run()` is not a task loop by itself. The task loop externalizes **goal, plan, state, and the stop decision**. The meta loop is an agent, or a team of peers, on that same knob.
 
-A third sketch, because horizon is the reason the layers exist:
+Short work can live in one prompt. "Search this error code" may finish in one cycle. The plan is this turn, and stop means the answer came back. Long work keeps the plan in a `ResearchPlan` or a queue. "Brief me on vendor X for diligence" has subtopics, and state accumulates across searches. Stop means a layered gate. General-purpose models handle the short column. They re-search the first query and declare victory on the long column unless the cabinet is outside the model.
+
+## 2. The inner loop
+
+The inner loop is the short-horizon engine. Outer layers wrap it. They do not replace it.
 
 ```
-  SHORT HORIZON                    LONG HORIZON
-  -------------                    ------------
-  "search this error code"         "brief me on vendor X for diligence"
-  one SPAL cycle may suffice       plan has subtopics; state accumulates
-  plan lives in this prompt        plan lives in ResearchPlan / a queue
-  stop = answer returned           stop = layered termination gate
-```
-
-General-purpose models are good at the left column and sloppy at the
-right unless you give them a file cabinet. The file cabinet is layer 2.
-
-## Layer 1: the inner loop (sense–plan–act–learn)
-
-Layer 1 is the short-horizon engine. Redraw it here so the outer layers
-have something precise to wrap.
-
-```
-  goal (this call)
+  goal for this call
        |
        v
-  +--> SENSE   current state, last observation, memory slice
-  |      |
-  |      v
-  |    PLAN    next action that maps onto a tool (or a user reply)
-  |      |
-  |      v
-  |    ACT     runtime executes the tool / speaks
-  |      |
-  |      v
-  |    LEARN   observation: continue, replan, or stop
-  |      |
-  |      +-- goal met or caller budget --> EXIT
-  |      |
-  +------+  (carry forward this iteration's context)
+  SENSE  -->  PLAN  -->  ACT  -->  LEARN
+    ^                              |
+    |         continue             |
+    +------------------------------+
+                  |
+                  +--> goal met, or the caller budget ends
 ```
 
-What makes it **agentic**, rather than a `while` in your script, is
-that the *model* chooses the next tool, judges whether the observation
-is good enough, and (within the bounds you set) when to stop. You
-still own the goal, the tool list, and the hard fences. You do not
-click each step.
+* **Sense**: Read the goal for this call, the last observation, and the memory slice you were handed.
+* **Plan**: Choose the next action that maps onto a tool, or onto a reply the user can see.
+* **Act**: The runtime executes the tool, or speaks. The model names the call.
+* **Learn**: Read the observation. Continue, replan, or stop. A sold-out result belongs here because the world answered.
+* **What makes the cycle agentic**: The model chooses the next tool, judges whether the observation is good enough, and, inside bounds you set, when to stop. You still own the goal, the tool list, and the hard fences. You do not click each step.
+* **State inside the cycle is short-lived**: Tool results land back in the thread. A scratch plan lives in the prompt. That state dies when the call ends, the window fills, or the process restarts. Fine for "look up the weather and summarize." Useless as the only memory for two hours and twenty searches.
+* **Reasoning patterns live here**: ReAct, chain-of-thought, and Reflexion make one cycle smarter. They do not, by themselves, persist a twelve-item plan overnight. Pasting the whole plan into the system prompt every turn pays the task-loop cost without the task-loop structure.
+* **A wall-clock budget**: An inner loop with no timeout is a runaway worker.
 
-Internal state accumulates *inside this cycle*: tool results stuffed
-back into the thread, a scratch plan in the prompt. That state is
-**short-lived**. It dies when the call ends, the window fills, or the
-process restarts. Fine for "look up the weather and summarize." Not
-fine for "research this company for two hours across twenty searches."
+## 3. The task loop
 
-Reasoning patterns such as ReAct, chain-of-thought, and Reflexion live
-*on this layer*. They make a single cycle smarter. They do not, by
-themselves, persist a twelve-item plan overnight. If you find yourself
-pasting the whole plan into the system prompt every turn, you are
-paying layer-2 tax without getting layer-2 structure.
+The task loop externalizes whatever must outlive one inner cycle.
 
-Even layer 1 needs timeouts. An inner loop with no wall-clock budget is
-a runaway worker with extra poetry.
+* **Goal**: Still one sentence the user cares about.
+* **Plan**: Subtopics, statuses, strategy notes. Or, for a batch, the queue itself.
+* **State**: Findings, sources, per-item results, errors.
+* **Stop decision**: Whether to iterate again. A number your code can read. "3/7 subtopics complete" can gate. A vibe in the chat log cannot.
 
-## Layer 2: the task loop
-
-Layer 2 **externalizes** the pieces that must outlive one inner cycle:
-
-- the **goal** (still one sentence the user cares about),
-- the **plan** (subtopics, statuses, strategy notes),
-- the **state** (findings, sources, queue of items, errors),
-- the **decision** of whether to iterate again.
-
-Those objects live in *your* process (Pydantic models, a DB row, a
-Redis key) — not only in the transformer's residual stream. Each
-iteration the inner agent still runs SPAL, but it is handed a
-**compressed view** of the campaign so far, and it must return a
-**typed delta** the controller can merge.
+Those objects live in your process: a Pydantic model, a database row, a Redis key. Each iteration still runs the inner loop, but you hand it a **compressed view** of the campaign, and it must return a **typed delta** the controller merges.
 
 ```
-  ResearchPlan / TaskQueue     <---+  persist
-  ResearchState / results      <---+
-           |                       |
-           v                       |
-  pack to_context()                |
-           |                       |
-           v                       |
-  inner agent (layer 1)            |
-           |                       |
-           v                       |
-  typed iteration output ----------+
+  ResearchPlan / TaskQueue  ---- persist
+  ResearchState / results   ---- persist
            |
            v
-  termination gate --> continue or synthesize
+  pack to_context()
+           |
+           v
+  inner agent (one short SPAL run)
+           |
+           v
+  typed iteration output --> merge --> termination gate
+                                         |
+                                         +--> continue, or synthesize
 ```
 
-Why bother, besides the context window? Because a general model asked
-to "keep going" without an external plan will re-search the first
-query, contradict itself, and declare victory. External state is how
-you make progress **visible** to code: `3/7 subtopics complete` is a
-number you can gate on. A vibe in the chat log is not.
+A model told to "keep going," with no external plan, re-searches the first query, contradicts itself, and declares victory. External state is how progress becomes visible to code.
 
-Two major shapes share this layer. Collapsing them into one object
-hides which controller you are building.
+Two shapes share the controller and hide different objects if you collapse them.
 
-| Shape | State looks like | Plan looks like |
+| Shape | State | Plan |
 |---|---|---|
-| Deep research | growing findings + sources | subtopics that get marked done |
-| Repetitive tasks | a queue + per-item results | often unnecessary; the queue *is* the work |
+| Deep research | Growing findings and sources | Subtopics marked pending, in progress, or complete |
+| Repetitive tasks | A queue plus per-item results | Often unnecessary. The queue *is* the work |
 
-Research explores. The task loop consumes a list you already have.
-Same controller pattern, different objects.
+Research explores. The task loop consumes a list you already have. Same controller pattern. Different objects.
 
-### Deep research: what "deep" is paying for
+**Deep**, on a research button, is an engineering word. It means more search, more reading, and a longer horizon than one retrieval hop. A reliable researcher and a token incinerator diverge on three choices: how you manage state between iterations, how you terminate, and how you attach tools so the agent can look at the world. Eval still scores the report. The controller scores whether to stop writing it.
 
-Every frontier lab ships a "deep research" button. The word **deep**
-here is engineering, not marketing: more search, more reading, a
-longer horizon than one retrieval hop. The difference between a
-reliable researcher and a token incinerator is almost entirely:
+Between iterations, compress on purpose. Completed subtopics can drop their raw notes from the next view. If you only ever append, iteration 12 is a transcript with a schema wrapped around it, and the gate is guessing from a flooded window.
 
-1. how you **manage state** between iterations,
-2. how you **terminate**,
-3. how you **attach tools** (search, fetch, files) so the agent can
-   actually look at the world.
+## 4. Plan, state, and the view
 
-Get those right and the loop converges. Get them wrong and it
-circles. Eval still scores the *report*; the loop controller scores
-*whether to stop writing it*.
-
-```
-  init plan + empty state
-        |
-        v
-  +--> run inner researcher with context(plan, state)
-  |         |
-  |         v
-  |    parse ResearchIteration
-  |         |
-  |         v
-  |    merge findings, update subtopics
-  |         |
-  |         v
-  |    gate: stop? --no--+
-  |         |            |
-  |        yes           +--> (maybe compress context)
-  |         v
-  |    SYNTHESIS AGENT --> report
-  +----(only if no)
-```
-
-The synthesis box is a different persona on purpose. Exploring and
-editing are two jobs. Merging them is how the last search result
-overwrites the outline.
-
-### Initial state and plan
-
-Before the first `Runner.run()`, construct two objects the rest of
-the loop will pass around. Names from the chapter's shape (you can
-rename them; do not skip the fields):
-
-**Plan** — strategic, coarse, revisable.
-
-- A list of **subtopics**, each with `name`, `status` (`pending` /
-  `in_progress` / `complete`), and `notes`.
-- A `strategy_notes` string for "search academic sources first" or
-  "ignore marketing blogs."
-- Helpers: `to_context()` (what the model is allowed to see) and a
-  **progress summary** (`2/5 complete, 1 in progress`) for logs and
-  for the gate.
-
-**State** — the accumulating evidence, not the strategy.
-
-- Goal text.
-- Findings (claim + source + which subtopic).
-- Iteration index, token/cost counters, last error.
-- Anything you refuse to trust the model to remember (URLs already
-  visited, so it does not loop the same hit).
+Before the first `Runner.run()`, build two objects the loop will pass around. You can rename them. Do not skip the fields.
 
 ```
   ResearchPlan                      ResearchState
-  ------------                      -------------
   subtopics[]                       goal
-    name / status / notes           findings[]
+    name / status / notes           findings[]  claim, source, subtopic
   strategy_notes                    sources_seen[]
-  to_context()                      iteration, spend
-  progress_summary                  errors[]
+  to_context()                      iteration, spend, errors[]
+  progress_summary
 ```
 
-Stuffing both objects wholesale into every prompt is the usual trap.
-`to_context()` is a *view*. As the campaign grows you truncate,
-summarize, or drop completed subtopics' raw notes. Layer 2 exists so
-you can **control the window** on purpose. If iteration 12 still
-contains iteration 1's raw HTML, you did not externalize state; you
-cloned the transcript into a Pydantic field.
+**Plan** is strategic, coarse, and revisable.
 
-On iteration zero, the plan may be empty. The agent's first job is
-then: **write the plan** (subtopics) before pretending to search. Put
-that in the instructions. An agent that searches without a plan will
-search whatever the temperature likes.
+* **Subtopics**: Each has `name`, `status` (`pending`, `in_progress`, or `complete`), and `notes`.
+* **strategy_notes**: "Search academic sources first." "Ignore marketing blogs."
+* **to_context()**: The view the model is allowed to see this iteration.
+* **Progress summary**: A line such as `2/5 complete, 1 in progress`, for logs and for the gate.
 
-### Tools for a research loop
+**State** is the accumulating evidence, not the strategy.
 
-After the objects exist, attach tools. The book's lab uses an MCP
-search server over STDIO (Brave as the example; any search MCP is
-the same shape). Node and `npx` show up because those servers are
-often Node packages. You can also register native `@function_tool`
-search against a local corpus — the loop does not care *which*
-packaging, only that **observations are grounded in a tool result**.
+* **Goal text**, plus findings as claim + source + subtopic.
+* **Iteration index**, token or dollar counters, and the last error.
+* **sources_seen**: URLs already visited, so the same hit does not become the next plan. Anything you refuse to trust the model to remember belongs here.
 
-```
-  create_search_server()     # MCP STDIO, env has the vendor key
-        |
-        v
-  agent.tools / mcp_servers = [search, maybe fetch_url, maybe files]
-```
+Stuffing both objects wholesale into every prompt is the usual trap. `to_context()` is a view. As the campaign grows you truncate, summarize, or drop the raw notes of completed subtopics. The task loop exists so you control the window on purpose. If iteration 12 still contains iteration 1's raw HTML, you cloned the transcript into a Pydantic field.
 
-Multiple sources are normal: web search, an internal wiki MCP, a SQL
-tool. Do not hand a research agent a shell "so it can curl anything."
-That is a sandbox failure wearing a lab coat.
+On iteration zero the plan may be empty. The agent's first job is then to **write the subtopics** before it pretends to search. Put that in the instructions. An agent that searches with no plan searches whatever the temperature likes.
 
-Lifecycle: connect the MCP server, run the loop, disconnect. Async
-context managers exist so you do not leak Node processes. A loop that
-forgets to close STDIO servers will look "fine" until the next
-exercise cannot bind a port.
+The synthesis step is a different persona on purpose. Exploring and editing are two jobs. One persona does both, and the last search result overwrites the outline. The controller runs the researcher until the gate fires, then hands plan plus state to the synthesizer. That handoff is below. The objects above are what make the handoff possible.
 
-The inner agent still needs a model that can **call** those tools
-reliably. A cheap model that cannot emit valid tool JSON will spin
-the layer-2 controller without ever filling `findings`. That is a
-routing problem: pick a model that can tool-call, then keep the gate.
+## 5. Tools that ground the iteration
 
-### Iteration body output
+After the objects exist, attach tools. Observations have to come from a tool result. A fluent paragraph is not a source.
 
-Each cycle the inner agent produces work. The controller must
-**parse** that work. Free-form markdown is a blog post, not a control
-signal.
+* **MCP search over STDIO**: The lab shape is `create_search_server()`, with the vendor key in the environment. Brave is the example. Any search MCP server is the same shape. Node and `npx` show up because those servers are often Node packages.
+* **A native tool**: `@function_tool` search against a local corpus is the same contract. The loop does not care which packaging you used.
+* **Several sources**: Web search, an internal wiki MCP server, a SQL tool. Normal. A shell "so it can curl anything" is a sandbox failure wearing a research excuse. The observation that grounds a finding is the tool result, not a paragraph the model wrote about what it thinks the page said.
+* **Lifecycle**: Connect the MCP server, run the loop, disconnect. An async context manager exists so you do not leak Node processes. A loop that forgets to close STDIO servers looks fine until the next exercise cannot bind a port.
+* **A model that can call tools**: A cheap model that cannot emit valid tool JSON spins the controller and never fills `findings`. Pick a model that can tool-call, then keep the gate. That is routing, not a reason to delete the controller.
 
-Define a typed iteration model and force the agent to fill it with
-structured outputs:
+## 6. A typed delta
+
+Each cycle the inner agent produces work. The controller must parse it. Free-form markdown is a blog post, not a control signal. Force a structured output:
 
 ```
   ResearchIteration
     summary_of_what_I_did
-    findings[]            # claim, source, subtopic tag
-    subtopic_updates[]    # name, status, notes
-    follow_up_questions[] # what to chase next
+    findings[]                 claim, source, subtopic tag
+    subtopic_updates[]         name, status, notes
+    follow_up_questions[]
     goal_satisfied: bool
-    confidence: float     # 0-1, treated as a claim, not a fact
+    confidence: float          0-1, a claim, not a measurement
     notes_for_next_iteration
 ```
 
-The controller's job after `Runner.run()`:
+After `Runner.run()` the controller does four things, in order.
 
-1. Validate the schema (reject extras; injection lessons apply to
-   tool-shaped output too).
-2. Merge findings into `ResearchState` (dedupe URLs).
-3. Apply `subtopic_updates` to `ResearchPlan` with rules *you* own
-   (do not let status jump to `complete` without a source if that is
-   your bar).
-4. Persist. Then ask the gate.
+1. **Validate**: Reject extra fields. A tool-shaped blob from the model is still untrusted structure.
+2. **Merge findings** into `ResearchState`, and dedupe URLs.
+3. **Apply subtopic updates** with rules you own. Status does not jump to `complete` without a source if that is your bar.
+4. **Persist**, then ask the gate.
 
-```
-  Runner.run(agent, context)
-        |
-        v
-  parse ResearchIteration   --fail--> retry / count as error iter
-        |
-        v
-  merge --> plan + state
-        |
-        v
-  termination gate
-```
+A parse failure retries or counts as an error iteration. It does not become a silent success.
 
-Trusting `goal_satisfied=True` because the model is confident is how
-loops escape homework. Treat self-assessment as one vote. Layered
-gates below. A second "goal/quality" agent is allowed if your eval
-budget can stand it; it is still not a proof.
+`goal_satisfied=True` is one vote. Self-assessment is how a loop escapes the homework: the model eventually votes yes to get out. A second goal-or-quality agent may cast another vote if the eval budget can stand it. That vote is still not a proof.
 
-### The termination gate
+## 7. A stack of stop conditions
 
-Stop conditions are **layered**. One predicate is how loops either
-never start or never end.
-
-Priority-shaped stack (always keep the first two):
-
-```
-  1. HARD MAX ITERATIONS     safety net; always present
-  2. BUDGET                  tokens or dollars; production-critical
-  3. GOAL SATISFIED          ideal exit; biased if self-reported
-  4. QUALITY THRESHOLD       confidence / external evaluator
-  5. STAGNATION              N iterations with no new information
-```
-
-**Hard max** is the fuse. Pick it from how long a *good* report
-actually takes in your domain, then add a little, not from "what is
-the biggest number that still feels lucky."
-
-**Budget** is the fuse that finance understands. Shrink per-iteration
-context if you keep blowing it; do not only raise the cap.
-
-**Goal satisfied** is the happy path. If only the researching agent
-votes, it will eventually vote yes to escape the homework. Mitigations:
-require `complete` on all subtopics, require N independent sources,
-or ask a separate judge.
-
-**Quality threshold** (e.g. confidence ≥ 0.85) is the same trap unless
-an external scorer owns the number. Use it as a *shortcut exit* when
-eval is real, not as a vibe.
-
-**Stagnation** catches the loop that paraphrases the same finding.
-Practical tests: URL overlap, embedding similarity of new findings vs
-the last batch, or "follow-up questions unchanged." Two iterations of
-near-duplicate text should stop even if the agent wants another
-search.
+One predicate is how loops either never start or never end. Keep a stack. Always keep the first two.
 
 ```
   after merge:
-       if iterations >= MAX:           STOP_MAX
-       elif spend >= BUDGET:           STOP_BUDGET
-       elif stagnant(N):               STOP_STAGNATION
-       elif plan.done and quality_ok:  STOP_GOAL
-       else:                           CONTINUE
+    iterations >= MAX              --> STOP_MAX
+    spend >= BUDGET                --> STOP_BUDGET
+    stagnant for N iterations      --> STOP_STAGNATION
+    plan done and quality ok       --> STOP_GOAL
+    else                           --> CONTINUE
 ```
 
-Order matters. A goal-yes that arrives after you are already over
-budget should still be `STOP_BUDGET` if you care about bills. Log the
-reason. Phoenix spans should show *why* the loop ended, or you will
-debug ghosts.
+1. **Hard max iterations**: The fuse. Set it from how long a *good* report takes in your domain, then add a little. Do not set it from the largest number that still feels lucky. Checked first.
+2. **Budget**: Tokens or dollars. The fuse finance understands. If you keep blowing it, shrink per-iteration context. Raising the cap is the other move, and it hides the window problem. A goal-yes that arrives after you are over budget is still `STOP_BUDGET`.
+3. **Stagnation**: N iterations with no new information. Checked before anyone may claim the goal, so a paraphrasing loop cannot vote itself done. Practical tests: URL overlap against `sources_seen`, embedding similarity of the new findings against the last batch, or `follow_up_questions` that did not change. Two iterations of near-duplicate text should stop even if the agent wants another search. This predicate ends the run. It does not, by itself, switch strategy and keep going.
+4. **Goal satisfied**: The happy path, and only after the fuses. If only the researching agent votes, it will vote yes to finish. Require `complete` on every subtopic, require N independent sources, or ask a separate judge.
+5. **Quality threshold**: For example, confidence at or above 0.85, owned by an external scorer. In the sketch this is the `quality_ok` half of `STOP_GOAL` (`plan.done and quality_ok`), not an earlier exit that beats max, budget, or stagnation. The researching agent's own float is the same trap as a self-reported goal.
 
-### Coding the loop
+Log the reason. A Phoenix span that shows *why* the loop ended is the difference between a gate and a ghost.
 
-The controller is deliberately boring. Pseudocode you should be able
-to recite:
+### Watch for
+
+* Treating `confidence` as a measured metric because the field is a float.
+* A goal-yes logged as `STOP_GOAL` after the budget already tripped.
+* Raising `MAX` every time the loop feels unfinished, until the fuse is decorative.
+
+## 8. The controller is boring
+
+The controller is a for-loop you should be able to recite. Cleverness belongs in the gate, not in hidden branches.
 
 ```
   plan, state = init(goal)
   mcp = await connect_search()
-  agent = build_researcher(mcp)   # instructions KNOW it is in a loop
+  agent = build_researcher(mcp)
 
   for i in 1..MAX:
       state.iteration = i
@@ -394,34 +214,21 @@ to recite:
   return report
 ```
 
-Instructions for the inner agent must say, in words:
+The inner agent's instructions have to say the situation in words.
 
-- You are running **inside an external loop**.
-- Iteration 1 with an empty plan → **emit the plan** (subtopics).
-- Later iterations → pick incomplete subtopics, search, update
-  statuses, do not re-open completed ones without a reason.
-- Fill the **typed** iteration schema. Do not invent a parallel
-  essay the controller will ignore.
-- `goal_satisfied` is a proposal. The controller may ignore you.
+* **You are inside an external loop.** This call is one iteration, not the whole campaign.
+* **Empty plan on iteration 1**: Emit the subtopics. Do not search yet.
+* **Later iterations**: Pick incomplete subtopics, search, update statuses. Do not reopen a completed subtopic without a reason.
+* **Fill the typed schema.** A parallel essay is ignored by the controller.
+* **`goal_satisfied` is a proposal.** The controller may ignore it.
 
-If the prompt pretends this is a one-shot chat, the model will try to
-write the final report on iteration 1 and then stall.
+A prompt that pretends this is a one-shot chat makes the model write the final report on iteration 1 and then stall. Keep the researcher off formatting. Headings, the executive summary, and "gaps and limitations" belong to synthesis. A half-report at iteration 3 is a document the loop becomes afraid to throw away.
 
-Keep the researcher off formatting. Headings, executive summary, and
-"gaps and limitations" belong to synthesis. Mixing them produces a
-half-report at iteration 3 that the loop is afraid to invalidate.
+Even a lab version of this function carries a per-iteration timeout, a cost counter, and a structured log line with `iteration` and `gate_reason`.
 
-Deploy-shaped extras that belong in this function even in a lab:
-per-iteration timeout, cost counter, structured logs with `iteration`
-and `gate_reason`.
+## 9. Synthesis is a second persona
 
-### Synthesizing the final output
-
-When the gate fires you have a bag of findings. They overlap, they
-disagree, they have holes. A **separate synthesis agent** turns that
-bag into a report.
-
-Typed report (shape, not a mandate of field names):
+When the gate fires you have a bag of findings. They overlap, they disagree, and they have holes. A separate synthesis agent turns the bag into a report. It does not explore.
 
 ```
   ResearchReport
@@ -433,293 +240,121 @@ Typed report (shape, not a mandate of field names):
     gaps_and_limitations
 ```
 
-Instructions: use the **plan's subtopics as the outline**. Surface
-contradictions instead of averaging them into mush. List sources.
-State what you did *not* find. That last field is how you keep the
-system honest when the gate was `STOP_BUDGET` rather than
-`STOP_GOAL`.
+* **Outline from the plan**: The subtopics are the section structure. The synthesizer does not invent a new table of contents that hides an unfinished subtopic.
+* **Contradictions stay visible**: Surface them. Averaging two sources into one smooth sentence deletes the disagreement the researcher paid to find.
+* **Sources and gaps**: List sources. State what you did not find. `gaps_and_limitations` is how the report stays honest when the gate was `STOP_BUDGET` rather than `STOP_GOAL`.
+* **A tiny second loop, if it must search**: Another task-loop cycle with a small `MAX`. An unbounded encore that "fills gaps" is a nested research loop with no fuse. You see it in the trace as search spans after the research gate has already logged a `gate_reason`, with no `iteration` cap of their own. When the synthesizer was itself delegated, `parent_turn_id` ties that encore to the outer turn.
+
+| | Researcher | Synthesizer |
+|---|---|---|
+| How often | Many iterations | Once |
+| Job | Explore, update the plan | Write the report |
+| Output | Typed deltas, allowed to be messy | Typed report, required to be structured |
+| Search | The point of the loop | Little or none, and gated if any |
+
+## 10. When a loop earns its cost
+
+A loop on a one-shot task buys latency and cost. Use a task loop when at least one of these is true.
+
+1. **Iterative discovery**: You cannot know the sources in advance. Research, investigation, "what is going on in this codebase."
+2. **Progressive refinement**: Drafts get better. Writing, or a design you critique and revise.
+3. **Batch processing**: A queue of similar items. The next section.
+4. **Conditional branching**: The next tool depends on the last observation. Diagnostics and troubleshooting.
+5. **Multisource aggregation**: The relevant sources appear during execution, not in the original prompt.
+
+Refuse a loop when a single pass is the product. Classification. Short Q&A against a known index. Format conversion. "Extract the order id." Those want one tool call and a schema.
 
 ```
-  researcher (many iterations)     synthesizer (once)
-  --------------------------       -------------------
-  explores, updates plan           does not search (or searches little)
-  typed deltas                     typed report
-  allowed to be messy              required to be structured
+  known answer shape, known tools, a cheap mistake?
+      yes --> one inner call (ReAct once, maybe)
+      no  --> is the missing piece time and evidence?
+                yes --> task loop
+                no  --> a better tool or a better index
 ```
 
-Do not let the synthesizer silently become a second research loop
-without a gate. If it must search, it is another layer-2 cycle with
-a tiny MAX, not an unbounded encore.
+If the failure is a wrong tool schema or bad retrieval, a loop repeats the failure. Fix the tool and the knowledge path first.
 
-### When to use an agentic loop
+## 11. A queue of similar items
 
-Not every agent needs layer 2. Adding a loop to a one-shot task is
-how you buy latency and cost with no quality.
-
-Use a loop when **at least one** of these is true:
-
-- **Iterative discovery** — you cannot know the sources in advance
-  (research, investigation, "what's going on in this codebase").
-- **Progressive refinement** — drafts get better (writing, a design
-  that you critique and revise).
-- **Batch processing** — a queue of similar items (see the next
-  section).
-- **Conditional branching** — the next tool depends on the last
-  observation (diagnostics, troubleshooting).
-- **Multisource aggregation** — relevant sources appear *during*
-  execution, not in the original prompt.
-
-Avoid a loop when a single pass is the product: classification,
-short Q&A against a known index, format conversion, "extract the
-order id." Those want one tool call and a schema, not a campaign.
-
-```
-  known answer shape, known tools, cheap mistake?
-      yes --> single inner call (maybe ReAct once)
-      no  --> is the missing piece *time and evidence*?
-                 yes --> layer 2
-                 no  --> maybe you need a better tool, not a loop
-```
-
-If the failure mode is "wrong tool schema" or "bad retrieval," a loop
-will repeat the failure. Fix the tools and the knowledge path first.
-
-### A repetitive task loop agent
-
-The second layer-2 pattern is **not** exploration. You already have
-the work: invoices to post, documents to transform, endpoints to
-test, records to migrate. The external object is a **queue**, not a
-research plan.
+The second task-loop shape is not exploration. You already have the work: invoices to post, documents to transform, endpoints to test, records to migrate. The external object is a queue, not a research plan.
 
 ```
   TaskState
-    queue[]           pending items
+    queue[]          pending items
     in_progress
-    done[]            {item, result, attempts}
-    failed[]          {item, error, attempts}
-
-  each iteration:
-    pull next item (or retry a failed one under a cap)
-    inner agent + tools process THAT item
-    record result
-    stop when queue empty OR max attempts OR budget
+    done[]           item, result, attempts
+    failed[]         item, error, attempts
 ```
 
-No strategic plan is required: the list *is* the plan. The inner
-agent still runs SPAL per item (maybe a tool, maybe a model
-transform). The controller still owns retries, idempotency keys,
-and "do not hide a failed item inside a cheerful paragraph."
+* **Pull**: The next pending item, or a failed item whose attempt count is under the cap. The controller chooses. The model does not get to skip `invoice-441` because the paragraph would read better without it.
+* **Process**: The inner agent runs sense–plan–act–learn on that item only. Tools post, transform, or test. One item's context is not the whole queue pasted into the prompt.
+* **Record**: Success appends `{item, result, attempts}` to `done`. Failure increments the count or lands `{item, error, attempts}` in `failed`.
+* **Stop**: Queue empty, max attempts, or budget. The summary is those counts and the failed rows.
+* **The list is the plan**: Subtopics on a homogeneous invoice queue add a strategy object the work does not need. The controller's progress line is counts: done, failed, remaining.
+* **Retries live in the controller**: Do not hope the model remembers it already tried `invoice-441`. At-least-once queues make that hope a double post. Pair the retry with the idempotency key on the side effect.
+* **Failed items stay visible**: A cheerful summary paragraph is not a place to hide `failed[]`.
+* **When this slides into the meta loop**: The items are heterogeneous, and choosing which item is itself a reasoning problem. An orchestrator is then picking the next worker. Keep this shape for homogeneous batches.
+
+## 12. An agent on the decide knob
+
+The task loop's controller is code. The meta loop puts an **agent** on decide, plan, and state. That is the promotion. It forks by who that agent is.
+
+1. **Orchestration**: One hub agent. Workers are tools. The hub writes the plan and votes stop. You keep one mouth. You pay a bottleneck and a context hog. Use it when the next subtask can change because a worker returned a surprise, and you still want a single owner of the campaign.
+2. **Collaboration**: Peers, with an optional turn manager. They share state. The plan may be jointly owned. Stop may be a vote or a chair. Use it when the product is multiple viewpoints: debate, a red team beside a builder, style beside factuality. It breaks on a queue of invoices, which wanted the task loop.
+
+A flow is the ordered cousin, and it is not either of these loops. Stages run in order (planner, then researcher, then writer). Easy to test stage by stage. Brittle when stage 1 is wrong, because later stages do not get a round to revisit it. A collaboration loop can revisit, and you pay in coordination and in traces. A hub that assigns turns while workers cannot see each other is orchestration. Call it that.
+
+## 13. The hub delegates
+
+A single orchestrator keeps the global plan and state. Worker agents — researcher, coder, writer, critic — are tools from the hub's point of view. Each delegation is an inner loop, or a nested task loop. The hub's own cycle is: sense the campaign, plan which worker to call, act by delegating, learn from the worker's typed result.
 
 ```
-  +--> dequeue item
-  |       |
-  |       v
-  |     process with tools
-  |       |
-  |       +-- ok --> append done
-  |       +-- fail --> retry count++ or failed[]
-  |       |
-  +------- queue remaining? 
-              |
-             no --> summary (counts, failures)
+  ORCHESTRATOR (plan + state + gate)
+        |
+        +--> worker A as a tool
+        +--> worker B as a tool
+        +--> worker C as a tool
+        |
+        v
+  merge typed results
+  hub decides: another round, or finalize
 ```
 
-Retries belong in the **controller**, not in a hope that the model
-will remember it already tried `invoice-441`. At-least-once queues
-make this mandatory.
+* **What you buy**: The next subtask can change when a worker returns a surprise. "This vendor is a subsidiary; research the parent." A hardcoded `for subtopic in plan` cannot notice that unless you encoded the rule.
+* **Typed, small returns**: The hub is a bottleneck and a context hog. Novel-length dumps blow the window. Timeouts and budgets apply per delegation and to the meta loop as a whole. Two fuses.
+* **Hub instructions**: Name the workers as tools. Forbid the hub from doing the specialist work itself. Require an explicit field you parse, in the spirit of `need_another_round` or `final_output`. A hub that both researches and orchestrates starves the workers and fills the window with its own notes.
+* **Nested cost**: A hub that delegates to a research worker, which runs its own task loop, multiplies the hub's `MAX` by the worker's `MAX`. Set both. Trace both, with `parent_turn_id` on the inner spans.
 
-When the items are heterogeneous and the *choice of which item* is
-itself a reasoning problem, you have slid toward layer 3: an
-orchestrator picking the next worker. Keep this section for
-homogeneous batches.
+## 14. Peers on a blackboard
 
-## Layer 3: the meta loop
+Collaboration is the other meta subtype. Agents share a state object and take turns contributing, critiquing, and revising. A lightweight turn manager may pick who speaks. It should not secretly be an orchestrator with extra adjectives.
 
-Layer 2's controller is code. Layer 3 puts an **agent** on decide /
-plan / state. That is the only distinction that matters. More
-processes, more MCP servers, or a fancier Compose file do not
-promote you.
+* **Blackboard**: Named slots for the draft, findings, critiques, and votes. Modules read and write that object. Isolated agents that cannot read it are a slow flow: stages that happen to be called in a loop.
+* **A common triad**: The researcher adds evidence. The critic challenges and asks for sources. The synthesizer updates the narrative. Each sees the others' last writes, so the round is cumulative.
+* **Stop conditions still layer**: Max rounds. Budget. Unanimous, or chair, "good enough." Stagnation, when the critic repeats the same complaint and the researcher cannot answer. A collaboration with no fuse is a meeting that invoices by the token.
+* **Score the artifact**: Traces get harder because speech is interleaved. Score the shared draft and the critiques, not only each speaker's prose.
+* **Slot rights are code**: The critic cannot silently mark a subtopic complete. That is behavioral policy on the blackboard, enforced where the write happens.
+* **Wrong product for this subtype**: A due-diligence memo can use the triad, because the product is a draft that survives critique. An invoice batch cannot. Peers debating each invoice buy a meeting. The queue already knew the next item. A hub that assigns turns, while workers cannot read each other's slots, is orchestration with extra steps. Draw it as a hub.
 
-Because an agent sits on the knob, layer 3 splits by **who** that
-agent is:
+## 15. What these loops do not monitor
 
-```
-  ORCHESTRATION META LOOP          COLLABORATION META LOOP
-  -----------------------          -----------------------
-  one hub agent                    peers (optional turn manager)
-  workers are tools                shared state / blackboard
-  hub writes the plan              plan may be jointly owned
-  hub votes stop                   stop may be a vote or a chair
-```
+The three layers answer who thinks, who stores the campaign, and who may change the campaign. They do not build a working model of how the reasoning itself is going.
 
-This is the same fork as hub-and-spoke versus collaboration among
-peers, now drawn as a **loop**: the hub or the team may iterate
-until a meta-level gate fires. Earlier multi-agent chapters teach
-handoffs and guardrails. This chapter teaches **when the outer
-iteration is itself agentic**.
+* **A stop is not a mid-course monitor**: Stagnation here compares URLs, embeddings, or follow-up questions, then ends the run. Two near-duplicate iterations become `STOP_STAGNATION`. Nothing in this stack then picks a different tool strategy and continues the same iteration. The overlap test is a fuse.
+* **A confidence field is a vote you chose to read**: The schema carries a float from 0 to 1. A threshold such as 0.85 can shortcut the exit when an external scorer owns the number. The researching agent's own float does not become a measurement because you stored it. "I am confident" in the summary is the same kind of claim.
+* **Findings are not rejected strategies**: `ResearchState` remembers claims, sources, and visited URLs. It does not require a slot for "raise the timeout; already failed." The controller does not route back to planning because two findings contradict each other. If you want that route, it is extra machinery these three layers do not include.
 
-### Multi-agent orchestration loops
-
-A single orchestrator agent keeps the global plan and state. Worker
-agents (researcher, coder, writer, critic) are **tools** from the
-hub's point of view. Each delegation is an inner (layer 1) or even
-a nested layer-2 research loop. The hub's SPAL is: sense the
-campaign, plan which worker to call, act by delegating, learn from
-the worker's typed result.
-
-```
-              +------------------------+
-              |  ORCHESTRATOR AGENT    |
-              |  plan + state + gate   |
-              +-----------+------------+
-                          |
-            +-------------+-------------+
-            |             |             |
-            v             v             v
-       [ worker A ]  [ worker B ]  [ worker C ]
-       as a tool     as a tool     as a tool
-            |             |             |
-            +-------------+------------>+
-                          |
-                          v
-                    merge, then
-                    hub decides:
-                    loop or finalize
-```
-
-What you buy versus layer 2: the *next subtask* can change when a
-worker returns a surprise ("this vendor is a subsidiary; research
-the parent"). A hardcoded `for subtopic in plan` cannot notice that
-without you encoding the rule.
-
-What you pay: the hub is a bottleneck and a context hog. The hub
-must get **typed, small** worker returns, not novel-length dumps.
-Timeouts and budgets apply **per delegation** and to the meta loop
-as a whole — two fuses.
-
-Instructions for the hub should name the workers as tools, forbid
-doing the specialist work itself, and require an explicit
-`need_another_round` / `final_output` style field you parse. A hub
-that both researches *and* orchestrates will starve the workers and
-blow the window.
-
-Nested loops are allowed and dangerous:
-
-```
-  meta (hub) --delegates--> research worker
-                                |
-                                +--> its own layer-2 search loop
-```
-
-Multiply MAX_ITERATIONS of the hub by MAX of the worker and you have
-a cost surface. Set both. Trace both (`parent_turn_id`).
-
-### Collaborative agentic loops
-
-Collaboration is the other meta subtype: **peers**, not a deputy
-list. Agents share a state object (blackboard) and take turns
-contributing, critiquing, and revising. A lightweight **turn
-manager** may pick who speaks; it should not secretly be an
-orchestrator with extra adjectives.
-
-```
-  shared state (blackboard)
-    draft / findings / critiques / votes
-           ^
-           |  read-write each turn
-           |
-  +--------+--------+--------+
-  |        |        |        |
-  v        v        v        v
-  researcher  critic  synthesizer  (example triad)
-           |
-           v
-  turn manager: whose move, and did we stop?
-```
-
-A common triad: **researcher** adds evidence, **critic** challenges
-and asks for sources, **synthesizer** updates the narrative. Each
-sees the others' last writes, so the round is cumulative. That is
-the point. Isolated agents that cannot read the blackboard are just
-a slow flow.
-
-Stop conditions still layer: max rounds, budget, unanimous (or
-chair) "good enough," stagnation (critic repeats the same complaint,
-researcher cannot answer). Collaboration without a fuse is a meeting
-that invoices by the token.
-
-When this subtype wins: the product *is* multiple viewpoints
-(debate, red-team plus builder, style plus factuality). When it
-loses: you needed a queue of invoices. Use the task loop.
-
-Traces get harder under collaboration; score the shared artifacts,
-not only each speaker's prose. Guardrails on who may write which
-slot (critic cannot silently mark a subtopic complete) are
-behavioral policy you enforce in code, not a vibe in the persona.
-
-```
-  FLOW (ordered stages)     COLLAB LOOP (this chapter)
-  ---------------------     --------------------------
-  stages in order           rounds over shared state
-  brittle if stage 1        can revisit, at the cost of
-  is wrong                  coordination and traces
-```
-
-Do not mix "we take turns" with "the hub assigned turns but workers
-cannot see each other" without drawing it. The second is
-orchestration. Call it that.
-
-## Where this chapter stops
-
-You now have the loop map:
-
-- layer 1 SPAL as the inner, short-horizon engine,
-- layer 2 as external plan/state/gate (research and task-queue
-  flavors),
-- typed iteration output and layered termination,
-- a synthesizer that is not the explorer,
-- layer 3 as agent-controlled meta: hub orchestration vs peer
-  collaboration.
-
-What you do **not** have yet is cognition and metacognition as an
-architecture — attention, confidence gates, stagnation as a *mind*
-problem rather than an `if overlap` problem. That is the next
-chapter's job.
-
-Keep the layers named. A `while` that cannot say whether it is layer
-2 or 3 is how campaigns thrash.
+Name the layer you shipped. A `while` that cannot say whether code or an agent owns the next campaign move will thrash. The overlap test, the budget fuse, and the typed delta are the machinery this chapter actually gives you.
 
 ## Check yourself
 
-1. A stakeholder says "we have an agentic loop" because
-   `Runner.run()` sits in `while True`. Which layer do they have,
-   and which objects would have to live *outside* the model before
-   you would agree they have layer 2?
-2. Walk a goal you actually want (research, or a batch of tickets)
-   through the three layers. Which layer's stop condition is a
-   number in your code, and which is a model's opinion?
-3. Why does `to_context()` exist if you already stored the full
-   `ResearchState`? What goes wrong on iteration 15 if you skip
-   the view?
-4. List the five gate predicates in an order you would ship. Where
-   does a self-reported `goal_satisfied=True` sit, and how can that
-   vote cheat?
-5. Typed `ResearchIteration` vs a markdown essay: name two fields
-   the controller cannot live without, and one failure mode if
-   `confidence` is treated as a measured metric.
-6. When would you refuse a loop entirely? Give a one-shot task from
-   a system you know, and name the failure a loop would only
-   repeat.
-7. Research loop vs repetitive task loop: which external object is
-   the plan, and why would adding subtopics to a homogeneous
-   invoice queue be a mistake?
-8. Layer 2 code-as-controller vs layer 3 hub: a worker discovers
-   the company is a subsidiary. Which layer can change the plan
-   without a human editing the `for` loop, and what budget fuse
-   did you just need to multiply?
-9. Orchestration vs collaboration: pick one product (support
-   triage, due-diligence memo, invoice batch). Which subtype fits,
-   and what goes wrong if you use the other?
-10. A synthesizer starts calling search "just to fill gaps" with no
-    MAX. Which layer did you accidentally nest, and what trace
-    fields would have shown the encore?
+1. A stakeholder says the system has an agentic loop because `Runner.run()` sits in `while True`. Which layer is that, and which objects would have to live outside the model before you would call it a task loop?
+2. Walk a goal you actually want, research or a batch of tickets, through the three layers. Which layer's stop condition is a number in your code, and which is a model's opinion?
+3. Why does `to_context()` exist if you already stored the full `ResearchState`? What goes wrong on iteration 15 if you skip the view?
+4. List the five gate predicates in an order you would ship. Where does a self-reported `goal_satisfied=True` sit, and how can that vote cheat?
+5. Typed `ResearchIteration` versus a markdown essay: name two fields the controller cannot live without, and one failure if `confidence` is treated as a measured metric.
+6. When would you refuse a loop entirely? Give a one-shot task from a system you know, and name the failure a loop would only repeat.
+7. Research loop versus repetitive task loop: which external object is the plan, and why would subtopics on a homogeneous invoice queue be a mistake?
+8. Code as controller, versus a hub: a worker discovers the company is a subsidiary. Which layer can change the plan without a human editing the `for` loop, and which budget fuse did you just multiply?
+9. Orchestration versus collaboration: pick support triage, a due-diligence memo, or an invoice batch. Which subtype fits, and what goes wrong with the other?
+10. A synthesizer starts calling search "just to fill gaps," with no `MAX`. Which loop did you accidentally nest, and which trace fields would have shown the encore?
