@@ -1,16 +1,10 @@
 # 1. Why your AI projects need a platform
 
-Companion notes for **Chapter 1** of *Designing AI Systems* (MEAP, Suhas
-Suresha and Dewang Sultania; Manning). This MEAP's printed contents page is
-**single-level** (nine chapter titles). The headings below follow the
-chapter's actual topics.
+Companion notes for **Chapter 1** of *Designing AI Systems* (Suhas Suresha and Dewang Sultania; Manning MEAP).
 
-This chapter is the map for the whole Platform track. Prototypes win demos.
-Production needs sessions, budgets, guardrails, retrieval, traces, and a way
-to ship the *next* AI feature without copying last quarter's Redis glue.
-Skip this chapter and every later "service" looks like enterprise theater.
+This chapter is the map. A prototype is a model call that wins a demo. Production is the sessions, budgets, guardrails, retrieval, traces, and deploy path around that call. Afterward you can name which service owns a production failure, and you can see why four teams with four session stores is sprawl rather than four clever choices. The model call is a leaf. The platform is the tree.
 
-## The mental model
+## 1. The model call is about 2%
 
 ```
                          +------------------ 98% ------------------+
@@ -27,108 +21,60 @@ Skip this chapter and every later "service" looks like enterprise theater.
                                       provider.chat()
 ```
 
-The one sentence to remember: **the model call is a leaf, not the tree.**
-Sculley et al.'s 2015 "Hidden Technical Debt in Machine Learning Systems"
-said model code was a sliver of an ML system. GenAI made the leaf even
-smaller and grew new rings: conversational state, token cost, tool
-isolation, retrieval, judges.
+* **The leaf**: `provider.chat()` is real and small. A diagram that is one box labeled "LLM" is the demo, not the system.
+* **The 2015 version of the same point**: Sculley et al., "Hidden Technical Debt in Machine Learning Systems," argued that model code was a sliver of an ML system. A 2015-shaped support classifier loads weights, encodes a ticket, and takes an argmax. Maybe 5–10% of the repo is the model. The rest is pipelines, training cadence, serving, and monitoring.
+* **What GenAI added**: Conversational state, token cost, tool isolation, retrieval, and judges. A modern support bot can be three lines to `chat.completions.create`. The other 98% is still the product: ingestion, safety, sessions, credentials, traces, routing, and deploy.
 
-## The AI Wild West: why winging it does not scale
+The invoice is not a quality report. Tokens, retries, and a chatty persona show up as dollars. None of those numbers say whether the answer was right.
 
-The chapter's running story is Sam: two weeks to a dazzling support-bot
-demo, then production.
+## 2. Sam's production wake-up
 
-### The production wake-up call
+The running story is Sam. Two weeks to a dazzling support-bot demo, then production. The failures are boring, and they repeat.
 
-What breaks is boring and expensive, and it is always the same list.
-Latency becomes a distribution. Without traces Sam cannot say whether
-the model, the retrieval, or a lock in his own code stalled a request.
-Concurrency arrives as a marketing blast: a load test nobody scheduled.
-Scripts that worked on a laptop have no queue, no limit, no degradation
-path. Cost arrives without attribution. The invoice jumps and nobody
-can say which feature or tenant did it. Safety that lived as a prompt
-paragraph meets users who ask for financial advice, jailbreaks, or PII.
-Prompt-only policy loses. Knowledge goes stale: FAQs hardcoded for the
-demo rot the week legal updates the PDF. There is no experiment loop,
-so the next prompt change is a hope dressed as a release.
+1. **Latency with no trace**: A request stalls. Sam cannot say whether the model, the retrieval, or a lock in his own code did it.
+2. **Concurrency with no limit**: A marketing blast arrives. The laptop script has no queue, no cap, and no degradation path.
+3. **Cost with no owner**: The invoice jumps. Nobody can name the feature or the tenant.
+4. **Safety that lived in a paragraph**: Users ask for financial advice, attempt a jailbreak, or paste PII. A prompt-only policy loses.
+5. **Knowledge that rots**: FAQs hardcoded for the demo are wrong the week legal updates the PDF.
+6. **No experiment**: The next prompt change is a hope dressed as a release.
 
-Each of those failures already points at a named capability: traces,
-limits, cost meters, guardrails, retrieval, evaluation. Sam did not hit
-"AI problems." He hit missing platform services.
+Each item already has an owner once you name the service: traces, limits, cost meters, guardrails, retrieval, evaluation. Sam did not hit a mysterious AI problem. He hit missing platform services.
 
-### Prototype vs production
+* **Prototype**: Tolerable for five people. A date you can demo.
+* **Production**: SLOs, concurrent users, audit, cost alerts, and a knowledge base that updates without a deploy. If you cannot fill that column, you are not ready to promise a date. You are ready to list the services you would have to invent.
 
-Write the gap as a table for *your* system. Prototype reality is
-"tolerable for five people." Production reality is SLOs, concurrent
-users, audit, cost alerts, and a knowledge base that updates without a
-deploy.
+### Watch for
 
-If you cannot fill the production column, you are not ready to promise a
-date. You are ready to list **services** you would have to invent.
+* Calling the missing services "the app." Once they have names, "we will glue Redis again" is sprawl, not pragmatism.
+* A notebook with a public URL treated as production. The wake-up list still applies.
+* Buying a framework and skipping the names. The framework does not answer which team owns the session store.
 
-### What if the infrastructure already existed?
+## 3. AI sprawl
 
-The rhetorical move of the book is simple. Every fire Sam hit is a
-named service — observability, rate limits, cost, guardrails, data,
-evaluation. You do not need to implement them this week. You need to
-stop calling them "the app." Once those capabilities have names, "we
-will glue Redis again" stops sounding like pragmatism and starts
-sounding like sprawl.
+Sam's mess multiplies. Four teams, four session stores (Redis, Postgres, files), four ways of holding keys, four log formats.
 
-### AI sprawl
+* **The security question nobody can answer**: Which bots see customer data?
+* **The learning that cannot spread**: A good prompt or a good chunk size stays inside the team that found it. The next feature takes months because navigating the maze is the work.
+* **The cause**: Uncoordinated progress, not foolish engineers. Each team solved yesterday's demo. None of them shared a default path.
+* **What a platform changes**: The secure, observable path becomes the one people take without a ticket. Shared session and cost code is how a policy and a lesson leave the team that discovered them. Teams still ship. They stop rediscovering the store.
 
-Sam's mess **multiplies**. Four teams, four session stores (Redis,
-Postgres, files), four key-handling stories, four log formats. Security
-cannot answer "which bots see customer data?" Locally smart choices sum
-to a brittle estate. New features take months because navigating the
-maze *is* the work.
+## 4. What an application actually needs
 
-Sprawl is not caused by stupid engineers. It is caused by uncoordinated
-progress. Each team solved yesterday's demo. None of them shared a
-default path. A platform is how you make the secure, observable path
-the one people take without a ticket.
+LangChain, LlamaIndex, Bedrock, Azure OpenAI, and similar products are real. You still want the patterns, so you can debug, avoid accidental lock-in, and fill a gap. The platform in this book is a teaching implementation and a blueprint you can subset.
 
-## The model is about 2% of the story
+Test a design against five needs.
 
-Traditional ML (2015-shaped support classifier): load weights, encode
-a ticket, `argmax`. Maybe 5–10% of the repo is "the model." The rest is
-data pipelines, training cadence, serving, monitoring.
+1. **Context-aware intelligence**: Organization knowledge and conversational state are two jobs. Stuffing both into one blob is how "as I mentioned yesterday" disappears into a PDF index.
+2. **Orchestration**: More than one model or tool hop, with a lifecycle you can observe and interrupt.
+3. **Safe action**: Tools with isolation and policy. A raw key in the prompt is a credential leak waiting for a jailbreak.
+4. **Visible quality and cost**: Traces you can join to scores and to dollars.
+5. **A developer path**: An SDK and one deploy story, so the fifth team does not invent a fifth HTTP wrapper.
 
-Modern GenAI support: three lines to `chat.completions.create`. The
-**98%** is not optional decoration. It is knowledge ingestion and
-retrieval, safety and compliance, multi-turn sessions and memories,
-tool execution and credentials, tracing and metrics and cost,
-multi-provider routing, deploy and scale and configuration.
+"We use LangChain" names a library. It does not name who owns sessions, keys, or the trace. Sprawl survives a shared import.
 
-If your architecture diagram is a single box labeled "LLM," you have
-drawn the demo. The leaf is real. The tree is what keeps it useful.
+## 5. The blueprint
 
-## First principles: what applications actually need
-
-LangChain, LlamaIndex, Bedrock, Azure OpenAI, and friends are real.
-This book still wants you to **see the patterns**, so you can debug,
-avoid accidental lock-in, and fill gaps. The platform it builds is a
-teaching implementation and a blueprint you could subset.
-
-Needs you can test a design against:
-
-- **Context-aware intelligence** — org knowledge *and* conversational
-  state as two services. Stuffing both into one blob is how "as I
-  mentioned yesterday" disappears into a PDF index.
-- **Orchestration** — more than one model or tool hop, with a lifecycle
-  you can observe and interrupt.
-- **Safe action** — tools with isolation and policy. Raw keys in the
-  prompt are a credential leak waiting for a jailbreak.
-- **Visible quality and cost** — traces you can join to scores and
-  dollars.
-- **A developer path** — an SDK and one deploy story so the fifth team
-  does not invent a fifth HTTP wrapper.
-
-## Platform blueprint
-
-The rest of *Designing AI Systems* is one service per concern.
-Independent deployability, shared patterns: contracts, adapters,
-telemetry.
+One service per concern. Each can be deployed on its own. They share contracts, adapters, and telemetry.
 
 ```
   App / SDK  -->  API gateway  -->  Workflow (the actual assistant)
@@ -145,71 +91,40 @@ telemetry.
                       +----->  Observability + Experimentation
 ```
 
-Name the pieces so Sam's fires have owners. The **Model Service** puts
-vendors behind one contract: streaming, retries, routing, cache. The
-**Session Service** owns history and memories under a token budget.
-The **Data Service** owns indexes and hybrid search. **Tools and
-guardrails** own credentials, isolation, and policy checks. **Observability
-and experimentation** own traces, scores, and comparisons. The
-**Workflow Service** is the unit you deploy — the actual assistant as a
-service. The **SDK and API** are how developers *feel* all of the
-above without drowning in it.
+* **Model Service**: Vendors behind one contract. Streaming, retries, routing, cache.
+* **Session Service**: History and memories under a token budget.
+* **Data Service**: Indexes and hybrid search.
+* **Tools and guardrails**: Credentials, isolation, and policy checks.
+* **Observability and experimentation**: Traces, scores, and comparisons.
+* **Workflow Service**: The unit you deploy. The assistant is a service.
+* **SDK and API**: How a developer feels all of the above without holding every knob.
 
-## Platform in action
+You can buy a vendor platform. You cannot skip naming these capabilities. Skip the names and Sam's story repeats with better slides: another demo, another wake-up, another estate of four session stores.
 
-Trace one user question — "return policy for electronics?" — without
-collapsing it into `openai.chat()`.
+## 6. One question, five owners
 
-Maria opens the support app. The gateway authenticates her request and
-starts a **trace**. The workflow loads her **session**: she already
-asked about a laptop yesterday. **Data** retrieves the current policy
-chunk, not last year's demo FAQ. The **model** generates with that
-context. If she asks to start a return, **tools** run under
-credentials the workflow never sees. **Guardrails** check input and
-output, and tool arguments if any. **Observability** records tokens,
-latency, a quality score. Cost is attributed to the support product,
-not to a bucket labeled "misc AI."
+Maria asks, "What is the return policy for electronics?" Do not collapse that into `openai.chat()`.
 
-That dance is the platform. Every hop is a service with a job, and the
-model call is one hop among many.
+1. **Gateway**: Authenticates Maria and starts a trace.
+2. **Session**: Loads yesterday's laptop conversation.
+3. **Data**: Retrieves the current policy chunk, not last year's demo FAQ.
+4. **Model**: Generates with that context.
+5. **Tools and guardrails**: If she asks to start a return, tools run under credentials the workflow never sees. Guardrails check the input, the output, and the tool arguments.
+6. **Observability**: Records tokens, latency, and a quality score. Cost is attributed to the support product, not to a bucket labeled "misc AI."
 
-## Why platform thinking changes everything
+A rate limit belongs on the gateway and on the workflow, not only inside a provider SDK. The provider limit protects the vendor. Your limit protects the tenant, the budget, and the rest of the estate when one feature loops.
 
-Shared session and cost code is not DRY-for-its-own-sake. It is how
-security policy and learning — a good prompt, a good chunk size —
-escape the team that found them. The default path becomes the audited
-path. The next team inherits the win instead of rediscovering Redis.
-
-You can still buy a vendor platform. You cannot skip naming these
-capabilities. If you skip the names, Sam's story repeats with better
-slide decks: another demo, another production wake-up, another estate
-of four session stores.
+Two rings a sklearn classifier did not have, and a GenAI assistant cannot skip: multi-turn session state, and tool credentials that must never enter the prompt. Retrieval that updates without a redeploy, and a judge attached to a trace, are the same kind of ring.
 
 ## Check yourself
 
-1. List six production failures from Sam's wake-up call. For each, name
-   the *service* in this book's blueprint that would have owned it.
+1. List Sam's six production failures. For each, name the service in the blueprint that would have owned it.
 2. Why is "we use LangChain" not an answer to sprawl by itself?
-3. Explain the 2% / 98% split to a manager who only sees the OpenAI
-   invoice. What on the invoice is *not* model quality?
-4. Data Service vs Session Service: a user says "as I mentioned
-   yesterday, our enterprise discount." Which service should answer,
-   and what goes wrong if you stuff that fact only into a vector index
-   of PDFs?
-5. Four teams, four session stores: pick one security question
-   leadership cannot answer, and one learning that cannot spread. How
-   does a platform change both without blocking the teams?
-6. Draw the path of Maria's question through at least five components.
-   Where would you put a rate limit, and why not only at the provider
-   SDK?
-7. A colleague wants to "just productionize the notebook." What is the
-   first non-model component you would demand, and what failure does it
-   prevent?
-8. Hidden Technical Debt (2015) vs GenAI: name two infrastructure rings
-   that *did not exist* for a sklearn classifier and now dominate the
-   design.
-9. When would you *not* build an internal platform (buy, or stay on one
-   script)? Give a criterion from this chapter, not from vendor
-   marketing.
-10. In one sentence: what does this chapter teach that a single
-    `provider.chat()` call cannot?
+3. Explain the 2% / 98% split to a manager who only sees the model invoice. What on that invoice is not model quality?
+4. A user says "as I mentioned yesterday, our enterprise discount." Which service should answer, and what goes wrong if that fact lives only in a vector index of PDFs?
+5. Four teams, four session stores. Name one security question leadership cannot answer, and one lesson that cannot spread. How does a platform change both without blocking the teams?
+6. Draw Maria's question through at least five components. Where does a rate limit go, and why not only in the provider SDK?
+7. A colleague wants to productionize the notebook. What is the first non-model component you would demand, and which failure does it prevent?
+8. Name two infrastructure rings a sklearn classifier did not have, that now dominate the design of a support assistant.
+9. When would you not build an internal platform, and instead buy one or stay on a single script? Give a criterion from this chapter.
+10. In one sentence, what does this chapter teach that a single `provider.chat()` call cannot?

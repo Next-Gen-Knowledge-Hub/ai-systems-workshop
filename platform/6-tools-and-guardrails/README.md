@@ -1,754 +1,392 @@
 # 6. Tools and guardrails
 
-Companion notes for **Chapter 6** of *Designing AI Systems* (MEAP, Suhas
-Suresha and Dewang Sultania; Manning). This MEAP's printed contents page is
-**single-level** (nine chapter titles). The headings below follow the
-chapter's actual topics.
+Companion notes for **Chapter 6** of *Designing AI Systems* (Suhas Suresha and Dewang
+Sultania; Manning MEAP).
 
-This chapter is how the platform lets workflows **act** without turning
-every team into a secrets-and-policy team. Sessions remember. Data
-retrieves. Models generate. Tools change calendars, tickets, and ledgers.
-Guardrails decide which of those changes are allowed. Skip this chapter
-and "function calling" is a JSON blob in a prompt plus an API key in an
-environment variable — until the sixth application copies both.
+This chapter establishes the Tool Service. A tool is a governed capability: a registry, an
+adapter, a credential reference, and policies on the path that actually runs. Afterward you
+can name the four verbs, the three layers of a definition, what MCP still leaves to the
+platform, and which guardrail fires on the user's text, on the proposed action, and on the
+reply. The schema is what the model sees. Identity, version, owner, credentials, limits,
+side effects, and audit are what the organization sees. Without the service, function
+calling is a JSON blob plus an API key in an environment variable, until the sixth app
+copies both. Sprawl looks like four `check_status` functions, four Slack tokens, and nobody
+who can say
+which bots can refund.
 
-This folder stays on the **Tool Service**: registry, adapters,
-credentials, MCP as an interoperability *bus*, execution limits, and
-**policies the platform enforces**.
+## 1. A governed capability
 
-## The mental model
-
-```
-  workflow / SDK
-        |
-        v
-  +------------------ Tool Service ------------------+
-  |  Register / Discover / Validate / Execute        |
-  |                                                  |
-  |  REGISTRY     names, versions, capabilities      |
-  |  ADAPTERS     translate platform call -> vendor  |
-  |  CREDENTIALS  refs only; values never in app     |
-  |  MCP CLIENT   one connector per server (cost M)  |
-  |  LIMITS       CPU, RAM, time, payload, retries   |
-  |  BREAKERS     closed / open / half-open          |
-  |  POLICIES     input | behavioral | output        |
-  +------------------------+-------------------------+
-                           |
-           +---------------+----------------+
-           v               v                v
-      HTTP APIs      MCP servers      async jobs
-      (Epic, …)      (GitHub, …)      (slow verifiers)
-```
-
-The one sentence to remember: **a tool is a governed capability**, not a
-function schema. The schema is what the *model* sees. Identity, version,
-owner, credentials, rate limits, side effects, and audit are what the
-*organization* sees. Guardrails are execution policy at every hop where
-the system might do something irreversible. A swear filter on the reply
-is only one slice of that policy surface.
-
-Chapter 1's "safe action" bullet is this service. Sprawl here looks like
-four copies of `check_status`, four Slack tokens in four `.env` files,
-and no one who can answer "which bots can refund."
-
-## Tools as platform-managed capabilities
-
-Most teams start the way they start sessions and RAG: inline. A Python
-function, a decorator, a key in the environment, a prompt that mentions
-the function name. That ships a demo. It does not ship a catalog.
-
-The inversion: applications **declare which capabilities they need**.
-The platform owns registration, discovery, credential injection,
-execution, and policy. A scheduling tool exists whether or not today's
-assistant is the one calling it. Another team can discover it, request
-access, and leave FHIR to the adapter authors.
+Teams start the way they start a demo: a Python function, a decorator, a key in the
+environment, a prompt that mentions the name. Applications instead declare which
+capabilities they need. The platform registers, discovers, injects credentials, executes,
+and applies policy. `healthcare.scheduling.book` exists whether or not today's assistant is
+the caller. The next team
+discovers it and leaves the vendor protocol to the adapter.
 
 ```
-  BEFORE                         AFTER
-  app A: book() + key            Tool Service: healthcare.scheduling.book
-  app B: book() + key     -->    apps A, B, C: discover + execute
-  app C: book() + other key      credential store: one secret, rotation
+  BEFORE                          AFTER
+  app A: book() + key             Tool Service: healthcare.scheduling.book
+  app B: book() + key             apps A, B, C: discover + execute
+  app C: book() + another key     one secret in the store, rotated once
 ```
 
-Sharing is the point, but so is **governance**. A capability with a
-name, a version, an owner, and an access policy can be reviewed. A
-closure in a notebook cannot.
+* **Register**: Put the capability in the inventory once. Schema, docs, endpoint or adapter,
+  metadata, a credential *reference*, limits. Many apps consume that one row.
+* **Discover**: Find tools by namespace, capability tag, read-only flag, or version
+  constraint. Return the function-calling JSON the model may see, and the operational fields
+  the platform needs. Identity comes from the auth context. An app id in the request is not
+  a way around the access check.
+* **Validate**: Check arguments before any side effect. Schema, ranges, and referential
+  checks, such as "this patient id is the authenticated patient." Fail cheap.
+* **Execute**: Inject credentials, apply limits, record the span, return a structured result
+  or a job id.
 
-### The tool service contract
+A service that only executes is a proxy. The other three verbs are how workflows stop
+hard-coding the Slack client.
 
-Same pattern as Model, Session, and Data: a small gRPC (or equivalent)
-surface, with a shared set of verbs rather than twelve client libraries.
+Three layers serve three consumers. Ship all three or the catalog is a docstring.
 
-Four operations cover the lifecycle:
+1. **Identity**: Name, version, owner, namespace. Registry, access control, and billing read
+   this layer. It does not belong in the prompt.
+2. **Schema**: Description, parameters, returns. This is what the model is allowed to see.
+   The description has to keep `book_appointment` from being used as `cancel_appointment`.
+   The credential name and the internal endpoint stay out.
+3. **Operational**: Read-only or not, idempotent or not, typical latency, rate limits, cost,
+   side-effect notes, `credential_ref`, execution limits. Guardrails, circuit breakers, and
+   finance read this layer. "This call emails the patient" has to be a field. A wiki page is
+   invisible to the policy engine.
 
-- **Register** — put a capability in the inventory: schema, docs,
-  endpoint or adapter, metadata, credential *reference*, limits.
-  Register once. Many apps consume.
-- **Discover** — find tools by namespace, capability tags, read-only
-  flag, version constraint. Return definitions the model can use as
-  function calling JSON **and** the operational fields the platform
-  needs. Callers do not pass "app id" to sneak around ACL; identity
-  comes from auth context.
-- **Execute** — run the tool with arguments. The service injects
-  credentials, applies limits, records the span, returns a structured
-  result or a job id.
-- **Validate** — check arguments *before* side effects: schema, ranges,
-  referential checks ("this patient id is the authenticated patient").
-  Validate is how you fail cheap.
+* **The SDK test**: Register a dotted name, a schema, an adapter id, `is_read_only`,
+  `is_idempotent`, rate limits, and a credential ref. Discover, pass the schemas into the
+  model call, and on a tool call run `platform.tools.execute(...)`. The platform injects the
+  secret. A new hire can find `healthcare.scheduling.*`, pin a version, and book a slot
+  without the EHR vendor's OAuth guide. Endpoint URLs copied into workflow code mean the SDK
+  has failed.
 
-If your "tool service" is only Execute, you have a proxy. The other
-three verbs are how you stop every workflow from hard-coding the Slack
-client.
+## 2. The registry
 
-### Definitions beyond function schemas
+The registry is the catalog: authoritative and searchable. Global tools and per-app tools
+both exist. "Send transactional email" can be global, with a brutal access list. An
+experimental scraper stays per-app so the billing bot never discovers it.
 
-Vendor function-calling docs care about **name, description, JSON
-Schema**. Production cares about three layers that serve three
-consumers:
+* **Hierarchical names**: Uncoordinated teams all register `check_status`. One means the
+  appointment, one the payment, one the prescription. The model calls whichever schema
+  landed in the prompt last. Dotted names make the collision fail at register time:
+  `healthcare.scheduling.check_availability`, `healthcare.scheduling.book_appointment`,
+  `healthcare.billing.verify_insurance`, `healthcare.billing.check_payment_status`,
+  `healthcare.clinical.lookup_prescription`.
+* **Prefix discovery**: `healthcare.scheduling.*` loads one coherent kit. Four hundred tools
+  in one prompt is an overload problem. Scoped discovery is how callers avoid it. A
+  namespace access list is a security control. Scheduling is not granted to every
+  application id.
+* **Capability tags**: Sometimes the caller knows the job, not the path. "Verify insurance"
+  matches a curated tag such as `insurance_verification`, `scheduling`, or `phi_read`,
+  including across namespaces. Filter by permission first, then rank. A high score on a tool
+  the caller cannot invoke is a gift to prompt injection: the model sees a name it cannot
+  call and improvises. If every tool is tagged `important`, the tags are not a catalog. A
+  research workflow can ask for `is_read_only=true` even when that namespace also contains
+  cancel.
+* **Semver that coexists**: An in-place overwrite turns every pinned prompt and every cached
+  schema into an incident. `2.0.0` adds a required `appointment_type` and lives beside
+  `1.4.2`. Discovery takes a constraint (`^1.4`, or `>=2.0.0 <3`) and the app migrates on
+  purpose. A breaking JSON Schema is a major. A behavior change with the same schema is a
+  major too: "now this emails the patient" would otherwise skip the confirmation policy.
+  Deprecate, alert consumers, and delete when the breaker is quiet. The catalog has a
+  retirement path.
 
-```
-  +------------------------------------------------------+
-  | IDENTITY     name, version, owner, namespace         |
-  |              (registry, ACL, billing)                |
-  +------------------------------------------------------+
-  | SCHEMA       description, parameters, returns        |
-  |              (what the model is allowed to see)      |
-  +------------------------------------------------------+
-  | OPERATIONAL  read-only? idempotent? typical latency  |
-  |              rate limits, cost, side-effect notes    |
-  |              credential_ref, execution limits        |
-  |              (guardrails, breakers, finance)         |
-  +------------------------------------------------------+
-```
+## 3. Adapters and credentials
 
-The model should see a description that prevents `book_appointment`
-from being used as `cancel_appointment`. Keep the credential name and
-the internal endpoint out of that schema layer. Operational metadata is
-how policy decides "this is not idempotent, do not retry blindly"
-without parsing English in the docstring.
-
-Side-effect documentation is not comments for humans only. Behavioral
-guardrails later need to know whether a call mutates, notifies, or
-charges. If that fact lives only in a wiki, the policy engine cannot
-read it.
-
-### The SDK interface
-
-From an application author's chair the rest is supposed to vanish.
-Register with a dotted name, a schema, an endpoint or adapter id, a
-behavior block (`is_read_only`, `is_idempotent`), rate limits, a
-credential ref. Discover by namespace or capability. Pass the returned
-schemas into the Model Service's generate call. When the model emits a
-tool call, `platform.tools.execute(...)` — with credentials injected
-by the platform rather than loaded from disk in the workflow.
-
-If developers still copy endpoint URLs into workflow code, the SDK has
-failed even if the registry is full. The test: a new hire can find
-`healthcare.scheduling.*`, pin a version, and book a slot without
-opening the EHR vendor's OAuth guide.
-
-## Registry: namespacing, discovery, versions
-
-The registry is the catalog. Authoritative. Searchable. A searchable
-inventory rather than a folder of Python files that import each other.
-
-The org-scale question: global tools vs per-app tools? Usually **both**,
-with namespacing as the structure. Global: "send transactional email"
-with a brutal ACL. Per-app: experimental scrapers that should never be
-discoverable by the billing bot.
-
-### Namespacing and discovery
-
-Uncoordinated teams all name a tool `check_status`. One means
-appointment, one payment, one prescription. A model asked to
-`check_status` will pick whichever schema was dumped into the prompt
-last. Hierarchical names make the collision embarrassing *at register
-time*:
-
-```
-  healthcare.scheduling.check_availability
-  healthcare.scheduling.book_appointment
-  healthcare.billing.verify_insurance
-  healthcare.billing.check_payment_status
-  healthcare.clinical.lookup_prescription
-```
-
-Discovery by prefix (`healthcare.scheduling.*`) is how a workflow loads
-a *coherent* kit. Dumping the union of 400 tools into one prompt is an
-agent-quality problem; the platform should offer scoped discovery so
-callers can avoid that overload.
-
-ACL on namespaces is a security control. Scheduling tools are not a
-participation trophy for every application id.
-
-### Capability-based discovery
-
-Sometimes the caller knows the *job*, not the dotted path. "I need
-something that verifies insurance." Capability tags on registration
-(`insurance_verification`, `scheduling`, `phi_read`) let Discover search
-across namespaces.
-
-Return relevance scores if you must rank; still **filter by
-permission** first. A high score on a tool you cannot invoke is a
-prompt-injection gift: the model sees a name it cannot call and
-improvises.
-
-Tags are curated, not free prose. If every tool is tagged `important`,
-you have built a folksonomy, not a catalog. Review tags the way you
-review names.
-
-Read-only filters belong here. A research workflow should be able to
-discover only `is_read_only=true` tools even if the same namespace
-contains a cancel API.
-
-### Version control
-
-Tools evolve. Parameters appear. Return shapes change. Deprecations
-happen. If Register overwrites in place, every pinned prompt and every
-cached schema is a production incident.
-
-Keep **semver** on the definition. `2.0.0` that adds required
-`appointment_type` can coexist with `1.4.2`. Applications discover with
-a constraint (`^1.4`, `>=2.0.0 <3`) and migrate on purpose.
-
-Major bumps are for breaking schema. Behavior changes that alter side
-effects ("now this emails the patient") are breaking even if JSON
-Schema is unchanged — treat them as majors or you will skip a
-confirmation policy.
-
-Do not leave infinite versions forever. Deprecate, alert consumers,
-delete when the breaker is quiet. The registry is a living catalog with
-a retirement path; treat it that way rather than as an endless history.
-
-## Execution: adapters, credentials, sync vs async
-
-Knowing a tool exists is inventory. Calling it is I/O: auth, failure,
-latency that might be 200ms or four hours. The platform wraps that so
-workflows speak **arguments in, result out**.
-
-### Adapters
-
-External systems are rude. An EHR might speak FHIR, OAuth with odd
-scopes, nested JSON, and per-endpoint quotas. Exposing that to every
-AI app means every developer becomes a vendor specialist. That is
-sprawl with extra XML.
-
-An **adapter** sits between Execute and the vendor:
+Inventory says the tool exists. Execute is I/O: auth, failure, and latency from hundreds of
+milliseconds to hours. Workflows still speak arguments in, result out.
 
 ```
   Execute(book_appointment, {patient_id, slot_id})
         |
         v
   SchedulingAdapter
-        |-- fetch token from credential store
-        |-- map args -> FHIR Appointment
-        |-- call vendor, honor their rate limits
-        |-- map response -> platform result / errors
-        v
-  ExecuteToolResponse
+        |-- token from the credential store
+        |-- args mapped to a FHIR Appointment
+        |-- vendor call, under their rate limits
+        |-- response mapped to the platform result
 ```
 
-The Tool Service contract stays stable when the vendor adds a field.
-Adapters are where retries that are *vendor-safe* live (idempotency
-keys, with a clear story when a blind POST would double-book). They are
-also where you strip secrets from logs: log the vendor request id, and
-keep the bearer token out of those lines.
+* **Adapter**: The EHR speaks FHIR, odd OAuth scopes, nested JSON, and per-endpoint quotas.
+  Putting that in every app makes every developer a vendor specialist. The adapter is where
+  vendor-safe retries live, including an idempotency key when a blind POST would
+  double-book. Log the vendor request id. Keep the bearer token out of the log line. If you
+  cannot name the adapter, HTTP is inlined in the workflow, and a second auth story will
+  grow beside it. The platform result stays stable when the vendor adds a field.
+* **credential_ref**: Register stores `credential_ref="scheduling-api-prod"`, never the
+  value. The value sits in a store with encryption, an access list, and rotation. Retrieve
+  happens at Execute, inside the platform, and is injected into the outbound call.
+  Application code, SDK traces, and model prompts do not contain the secret. Errors do not
+  echo `Authorization`. Rotation updates the store and maybe bounces a long-lived adapter
+  connection. Workflows do not redeploy. The person who registers the shape does not have to
+  see the production key. Provisioning stays out of band: a vault pipeline, an admin CLI, or
+  sealed automation. Docs that still say `export EPIC_TOKEN=...` for app developers are a
+  brochure.
+* **The store wraps what you already run**: Vault or a cloud secrets manager remains the
+  source of truth. **Store** keeps name, type, value, rotation policy, and the tool names
+  allowed to use it. **Retrieve** takes the name and the requesting tool, and denies the
+  call when that tool is absent from the allow list. The booking tool must not pull the
+  warehouse admin token. That check is the confused-deputy control. **Rotate** installs the
+  new value and invalidates the old one. In-flight calls fail or retry with backoff. They do
+  not log the old secret. Retrieve is privileged and audited. A retrieve with no matching
+  Execute is a smell.
 
-If you cannot name the adapter for a tool, you probably inlined HTTP
-in the workflow. That will grow a second auth story.
+### Watch for
 
-### Credential isolation
+* The secret in source, in a prompt, or in an error body. Any one of those is the isolation
+  failure.
+* A credential allow list of "any tool." Rotation then becomes a broader leak.
 
-The most dangerous line in a naive tool is the key in source. Isolation
-is **indirection**: at Register you attach `credential_ref="scheduling-
-api-prod"`, never the value. Values live in a store with encryption,
-ACL, rotation. Retrieve happens at Execute, inside the platform
-boundary, injected into the outbound call.
+## 4. Sync, async, and execution limits
 
-Consequences you should be able to swear to:
+Backends do not share a latency budget. Slot lookup is hundreds of milliseconds. Insurance
+verification can take tens of seconds. Prior authorization waits on a person and can take
+hours.
 
-- Application code, SDK traces, and model prompts never contain the
-  secret.
-- Error messages never echo `Authorization` headers.
-- Rotation does not require redeploying workflows — update the store,
-  maybe bounce long-lived adapter connections.
-- Separation of duties: the person who registers the tool shape is not
-  required to see the production key. Provisioning is out of band
-  (vault pipeline, admin CLI, sealed IaC).
+* **Sync**: Bounded work. The caller waits inside a wall. "Sync" still has a hard kill.
+  Typical latency on the definition is a hint. The timeout is the wall.
+* **Async**: Work that would stall the conversation returns a job id immediately (`queued`,
+  then a worker, then `completed` or `failed`, by poll or callback). The workflow can tell
+  the user it is checking coverage and resume when the job finishes. Do not block the user
+  on a vendor SLA. Idempotency matters more here. If `is_idempotent` is false, a second
+  Execute after a timeout can double-book. The adapter sends an idempotency key the vendor
+  understands, or Validate rejects a second book for the same slot.
 
-If a "platform" still documents `export EPIC_TOKEN=...` for app
-developers, you have a brochure.
+Per-call bounds are declared at Register and enforced at Execute. A limit that exists only
+in a wiki is decoration. The platform may cap an owner's numbers. Nobody gets a 30-minute
+sync timeout because they typed it.
 
-### Credential store
+* **Timeout**: Hard kill of one call.
+* **Memory and CPU**: Required when an adapter runs user-shaped code or parses hostile JSON.
+* **Max response size**: Truncate or reject. A dump does not enter the model's context.
+* **Retry budget**: Retries only when `is_idempotent` is true, or when the adapter holds a
+  real idempotency key. Otherwise you double-charge.
 
-Most orgs already have Vault or a cloud secrets manager. The platform
-interface should **wrap**, leaving the existing store as the source of
-truth:
+A session cap on mutating calls, such as three booking attempts, is behavioral policy. The
+enforcement point is still Execute.
 
-- **Store** — name, type, value, rotation policy, **allowed tool
-  names**.
-- **Retrieve** — by name *and* requesting tool; deny if the tool is
-  not on the allow list (confused deputy: the booking tool should not
-  pull the warehouse admin token).
-- **Rotate** — new value, old value invalidated; in-flight calls fail
-  or retry with backoff, they do not log the old secret.
-
-Retrieve is a privileged operation. Audit it. Observability will want
-those records next to the tool span. Even here: a retrieve without a
-corresponding Execute is a smell.
-
-### Synchronous vs asynchronous execution
-
-Backends do not share a latency budget. Slot lookup: hundreds of
-milliseconds. Insurance verification: tens of seconds. Prior
-authorization: human in the loop, hours.
-
-```
-  SYNC                              ASYNC
-  app -> Execute ---------------->  app -> Execute
-           | wait                          |
-           v                               v
-        adapter                         job id (queued)
-           |                               |
-           v                               v
-        result                          worker + vendor
-                                           |
-                                           v
-                                        completed | failed
-                                        (poll / callback)
-```
-
-Sync is for bounded, predictable work. The Tool Service still applies
-timeouts; "sync" still means "wait within a wall," with a hard kill.
-
-Async is for work that would stall the conversation. Return a task id
-immediately. The workflow continues (tell the user you are checking
-coverage) and resumes on completion. The product lesson matches async
-ingest elsewhere on the platform: **do not block the user on someone
-else's SLA**.
-
-Idempotency matters more on async retries. If `is_idempotent` is false,
-duplicate Execute after a timeout might double-book. The adapter should
-use idempotency keys the vendor understands, or Validate should reject
-a second book for the same slot.
-
-## MCP interoperability
-
-The inventory you built still sits inside one organization. Outside:
-every SaaS has its own auth, schema, errors. Five apps times ten
-providers is **fifty** glue layers. The sixth app pays ten again.
-
-MCP (Model Context Protocol, open standard, 2024) attacks the glue, not
-your org chart. Providers wrap once. Applications speak one protocol.
-Any host that implements the client side can call any server that
-implements the server side.
-
-Stay here for the **platform arithmetic** and the gaps you must still
-fill. Protocol transports, Inspector, and writing a server are a
-different teaching track.
-
-### From N×M to N+M to M
-
-Without a standard: **N applications × M providers**. Custom connectors
-everywhere.
-
-With MCP, each provider builds one server, each application (or host)
-builds one client: **N + M**.
-
-With a platform Tool Service as the **single MCP client** for the
-company, application teams do not implement MCP at all. The service
-connects to each server once. Every workflow discovers those tools like
-native ones. Integration cost inside the org collapses toward **M** —
-one connection per server — plus the platform work MCP refuses to do
-(next subsections).
+When the vendor is already failing, retries from every session are a self-inflicted load
+test. A breaker per tool, or per vendor, watches recent failures.
 
 ```
-  N apps x M APIs     -->  spaghetti
+  CLOSED --(failures >= threshold)--> OPEN
+     ^                                 |
+     |        recovery timeout         |
+     +----------- HALF-OPEN <----------+
+```
 
-  N MCP clients + M servers  -->  protocol win
+1. **Closed**: Traffic flows and failures are counted. This is the steady state. Opening on
+   a single blip fails healthy calls.
+2. **Open**: Fail fast, with no outbound call, when the failure count crosses the threshold.
+   The model receives a structured error it can explain. Use this when the vendor is down
+   across sessions. A single hung call is the timeout's job, not the breaker's.
+3. **Half-open**: After the recovery timeout, a few probes go out. Success returns to
+   closed. Failure returns to open. Unlimited probes mean you are closed again.
 
+Thresholds and recovery timeouts are operations knobs, visible as state changes before
+someone reconstructs them after an incident. A healthy vendor booking the wrong patient is a
+policy miss. The breaker only sees vendor health.
+
+## 5. MCP as the organization's one client
+
+Outside the org, every SaaS has its own auth, schema, and errors. **MCP** (Model Context
+Protocol, an open standard from 2024) standardizes that wire. Providers wrap a system once.
+A host that speaks the client side can call a server that speaks the server side. This
+section is the arithmetic, and the gaps the protocol leaves you.
+
+1. **N times M**: No shared protocol. N applications each integrate M providers. Five apps
+   and ten providers are fifty glue layers, and the sixth app pays for ten again.
+2. **N plus M**: Each provider builds one MCP server. Each application builds one client.
+3. **M**: The Tool Service is the company's single MCP client. App teams do not implement
+   MCP. The service connects to each server once, and workflows discover those tools like
+   native ones. You still pay for credentials, policy, and audit. The protocol does not do
+   that work.
+
+```
   1 Tool Service client + M servers
        ^
-       |  N apps use Register/Discover/Execute
-       +  credentials, policy, audit still here
+       |  N apps use Register, Discover, Execute
+       +  credentials, policy, and audit stay here
 ```
 
-MCP is why you should adopt a shared wire format instead of inventing a
-private plugin format. The protocol standardizes the *wire*. The
-platform still standardizes *who paid, who was allowed, which version,
-which secret*. Keep the Tool Service; MCP does not replace it.
+* **Wire versus organization**: MCP is the shared socket, so you do not invent a private
+  plugin format per host. The platform still decides who paid, who was allowed, which
+  version, and which secret. Keep the Tool Service. The protocol does not replace it.
+* **Server, client, host**: A **server** wraps a system (a repo, a database, a filesystem)
+  and serves capabilities. It may be a local subprocess or a remote process. The word is a
+  role, not a rack. A **client** is the peer inside a host that talks to one server. A
+  **host** owns those clients: Claude Desktop, an IDE, or this Tool Service. You verify
+  community servers. A "calendar" server that also dumps `.env` is a supply-chain incident.
+  Application authors do not pick a transport. The Tool Service does.
+* **Three primitives**: **Tools** are invokable actions (`tools/list`, `tools/call`) with
+  JSON Schema arguments. They map onto Execute. **Resources** are read-only context, such as
+  files or records. Keep `resources/read` on its own path. Do not fold a file read into
+  Execute. **Prompts** are reusable templates, such as "review this PR with this rubric."
+  The first platform hook is tools. Prompts need a single owner so they do not fork the
+  Model Service's system-prompt store.
+* **Credentials stay yours**: The spec does not say how a server authenticates to GitHub.
+  Public servers often expect a static token in the environment. That is fine on a laptop.
+  It is not rotation, scope, or audit.
+* **Policy stays yours**: There is no standard field for human confirmation,
+  production-only, or three calls per session. No namespace governance, no org rate limit,
+  no cost attribution.
+* **The threat model stays yours**: Prompt injection through tool results, confused
+  deputies, and over-broad servers are still yours. MCP moves bytes in a standard shape.
+  Sandbox and egress limits are still platform work.
+* **register_mcp_server**: Connect to an approved server, list its tools, and map them under
+  a platform namespace such as `devtools.github.create_issue`. Execute rides the MCP
+  transport. The SDK call is
+  `register_mcp_server(url, namespace, credential_ref, policy_overrides)`, then ordinary
+  Discover. Credentials come from the store, so a server that wanted `GITHUB_TOKEN` in its
+  environment gets a reference instead, without a fork. Overrides such as
+  `requires_confirmation` and `max_calls_per_minute` attach at registration. Each call is
+  traced and billed like a native adapter. Workflows should not be able to tell they are
+  speaking MCP. Pin server versions the way you pin semver. A surprise schema on an unpinned
+  community server is a production break on either wire.
 
-### Hosts, clients, and servers
+### Watch for
 
-MCP vocabulary is easy to scramble with HTTP:
+* MCP in name only. The registry lists the server, and the token still lives in a developer
+  environment variable.
+* A workflow that imports an MCP client itself. The transport has leaked into product code.
 
-- **Server** — wraps a system (repo, DB, filesystem) and *serves
-  capabilities*. May run as a local subprocess or as a remote service.
-  "Server" is a role, not a rack.
-- **Client** — the protocol peer that sits inside a host and talks to
-  one server.
-- **Host** — the application that owns clients: Claude Desktop, an IDE,
-  **or your Tool Service**.
+## 6. Where a guardrail fires
 
-You do not build most community servers. You **verify** they do what
-they claim (a "calendar" server that also dumps `.env` is a supply-chain
-incident). On a platform, application authors should not even choose a
-transport. The Tool Service does.
+A profanity filter and a vendor safety classifier are real. They are one slice of the
+surface. A patient-intake assistant that never swears can still book a specialist with no
+referral, or schedule someone who has not finished the intake forms.
 
-### Three primitives
-
-Servers expose:
-
-- **Tools** — invokable actions (`tools/list`, `tools/call`). This maps
-  onto the Tool Service Execute path. JSON Schema for arguments.
-- **Resources** — read-only context (files, records). Pull, with
-  mutation left to tools. A codebase server might expose files as
-  resources.
-- **Prompts** — reusable templates (review this PR with this rubric).
-
-The platform's first integration point is **tools**. Resources can feed
-document indexes or session context if you have a story; keep
-`resources/read` on its own path rather than folding it into Execute.
-Prompts collide with Model Service system-prompt management — decide an
-owner, and keep one store.
-
-### What MCP does not cover
-
-Say this louder than the announcement blog:
-
-- **Credential management.** The spec does not tell you how the server
-  authenticates to GitHub. Surveys of public servers have found heavy
-  reliance on static tokens in environment variables. Fine on a laptop.
-  Not a rotation, scope, or audit story.
-- **Policy.** No first-class "needs human confirmation," "prod only,"
-  "max three calls per session." No namespace governance, no org rate
-  limits, no cost attribution.
-- **Security as a complete model.** Prompt injection via tool results,
-  confused deputies, over-broad servers — still *your* threat model.
-  Sandbox and egress hardening are real work; assume MCP moves bytes in
-  a standard shape, and keep the threat model yours.
-
-MCP moves bytes from A to B in a standard shape. Before and after the
-call remain platform work. That is the whole justification for
-Register-plus-policy on top of `tools/call`.
-
-### Integrating MCP with the platform
-
-The Tool Service **is** an MCP client. It connects to approved servers,
-lists tools, maps them into the registry under a **platform namespace**
-(`devtools.github.create_issue`), and routes Execute through the MCP
-transport.
-
-Layer what the protocol omitted:
-
-- Credentials from the store, with values kept out of the server's env
-  on a laptop.
-- Policy overrides at registration (`requires_confirmation`,
-  `max_calls_per_minute`).
-- Every invocation traced and billed like a native adapter.
-
-SDK shape: `register_mcp_server(url, namespace, credential_ref,
-policy_overrides)` then Discover as usual. Workflows should not know
-they are speaking MCP. If they do, you leaked a transport into product
-code.
-
-Pin server versions the same way you pin tool semver. Community servers
-move. A surprise schema change is a production break whether the wire
-is HTTP or MCP.
-
-## Execution safeguards
-
-Execute is you acting on the world's APIs **on behalf of a model**. A
-runaway adapter loop, a multi-gigabyte payload, or a vendor outage
-should not take down the Tool Service or adjacent sessions.
-
-Isolation here is the same lesson as process isolation for workflows,
-applied per invocation.
-
-### Resource limits
-
-Per-call bounds, declared at Register, enforced at Execute:
-
-- **Timeout** — hard kill. "Typical latency" is a hint; timeout is a
-  wall.
-- **Memory / CPU** — especially if adapters run user-shaped code or
-  parse hostile JSON.
-- **Max response size** — truncate or reject; do not ingest a dump into
-  the model's context.
-- **Retry budget** — retries only if `is_idempotent` (or if the adapter
-  has a real idempotency key). Otherwise you double-charge.
-
-Defaults come from the tool owner. The platform may cap them (no tool
-gets a 30-minute sync timeout just because someone typed it). Session-
-level budgets (max mutating calls per conversation) are **behavioral
-policy**, but they share the same enforcement point: Execute.
-
-Limits that exist only in a wiki are decorative.
-
-### Circuit breakers
-
-When a vendor is already failing, retrying from every session is a
-self-inflicted load test. A breaker per tool (or per vendor) tracks
-recent failures:
-
-```
-  CLOSED  --(failures >= threshold)-->  OPEN
-    ^                                    |
-    |         recovery timeout           v
-    +------------ HALF-OPEN <------------+
-         (few probes; success -> CLOSED
-          fail -> OPEN)
-```
-
-- **Closed** — traffic flows; failures counted.
-- **Open** — fail fast, no outbound call. The model gets a structured
-  error it can explain, with a hang replaced by an immediate response.
-- **Half-open** — limited probes. Success closes. Failure re-opens.
-
-Thresholds and recovery timeouts are ops knobs. They belong in
-observability (error rate, state changes), with state changes visible
-before an engineer reconstructs them after an incident.
-
-Breakers are a companion to Validate. A tool that is "healthy" and
-booking the wrong patient is a policy miss; the circuit only sees
-vendor health.
-
-## Guardrails as execution policies
-
-"Guardrails" in casual speech means profanity filters and vendor safety
-classifiers. Those are real. They are a **subset**.
-
-A patient intake assistant that never swears can still book a specialist
-without a referral, or schedule someone who has not finished intake
-forms. Those are **policy** failures. No generic moderation API knows
-your clinic's rules.
-
-That distinction moves the control plane:
-
-- Content filters are often vendor-generic, prompt-adjacent, the same
-  for every app.
-- Execution policies are **yours**: domain, workflow, environment.
-  They encode rules you would fire a human for skipping.
-
-If policy lives only as a paragraph in the system prompt, a user who
-asks the right way will walk past it. The Tool Service (with a
-guardrail evaluator on the path) is where rules become **deny/allow/
-confirm/transform** with an audit row.
-
-Treat inspection as a chain, not a single gate. A useful map of *when*
-policy can fire:
+* **Content filters**: Often the same for every app, and often sitting beside the prompt. No
+  generic moderation API knows the clinic's rules.
+* **Execution policies**: Yours. Domain, workflow, and environment. They encode a rule you
+  would fire a human for skipping. Each decision is deny, allow, confirm, or transform, and
+  each one writes an audit row.
+* **Prompt text**: A paragraph in the system prompt is a rule a careful user can walk past.
+  The Tool Service is where the rule becomes one of those four outcomes.
 
 ```
   (1) user input
-        |
-        v
-  (2) proposed tool choice          behavioral
-        |
-        v
-  (3) tool arguments                Validate + constraints
-        |
-        v
-      Execute (limits, breaker, credentials)
-        |
-        v
-  (4) tool result                   (injection via retrieved text)
-        |
-        v
-  (5) model output to user          output policy
+  (2) proposed tool choice       behavioral
+  (3) tool arguments             Validate + constraints
+      Execute                    limits, breaker, credentials
+  (4) tool result                injection inside retrieved text
+  (5) model output to the user   output policy
 ```
 
-Prompt-only safety occupies none of these boxes reliably. Extra critic
-loops around (5) are optional. Argument checks and execution policy
-(steps 2 and 3) still have to exist even when you never train a judge.
+Prompt-only safety occupies none of these points reliably. A critic loop around (5) is
+optional. Argument checks and the policy at (2) and (3) still have to exist when you never
+train a judge.
 
-## In practice: input, output, behavioral
+## 7. Input, output, and behavioral policy
 
-Three categories, three failure classes.
+Three failure classes. A toxicity score catches one of them.
 
-### Input policies
-
-Operate at (1), and often again on tool arguments at (3).
-
-**Defend the system:** prompt injection and jailbreaks ("ignore previous
-instructions," roleplay smuggling, encoded payloads). Pattern matching
-catches sloppy attempts. Classifiers catch some of the rest. Neither is
-complete — hence defense in depth with output policy and least-privilege
-tools.
-
-**Scope the product:** topic classifiers so a scheduling assistant does
-not become a diagnosis bot. Out-of-scope is a product boundary. Action
-might be *redirect* ("I can help with intake; for clinical questions, a
-clinician") rather than a dead end.
-
-**PII on the way in:** warn or block SSNs and card numbers if the
-workflow is not supposed to collect them in chat.
-
-Declarative checks belong in config: type, action (`block`, `redirect`,
-`warn`), user-visible message, thresholds. Engineers should not ship a
-new container to add a jailbreak pattern.
-
-Tool-argument validation is input policy for the vendor: types, required
-fields, "date is not in the past," "patient_id matches the authenticated
-user." This is Validate with teeth. A past-dated booking should never
-reach the adapter.
-
-### Output policies
-
-Operate at (5): last look before a human sees tokens (and before you
-persist them as gospel in Session).
-
-- **PII leakage** — redact or review. Clinic phone numbers vs patient
-  SSNs are different; blind redact can be as wrong as blind send.
-- **Grounding** — claims about coverage or policy cross-checked against
-  retrieved hits or structured sources. Unverifiable claims: hedge,
-  flag, or block. This is a **platform check** you can attach to many
-  workflows.
-- **Brand / regulatory tone** — material in health and finance, with
-  real compliance weight.
-
-Severity tiers keep you honest. After you know which failure classes
-matter, this table is a starting map:
+1. **Input policy**: Runs at (1), and again on tool arguments at (3). Use it when the harm
+   is in what arrived. It fails when you only filter tone and the arguments still name the
+   wrong patient. Injection and jailbreaks ("ignore previous instructions," roleplay
+   smuggling, encoded payloads) are the first check. Patterns catch sloppy attempts.
+   Classifiers catch some of the rest. Neither is complete, so output policy and
+   least-privilege tools stay in place. A topic check keeps a scheduling assistant from
+   becoming a diagnosis bot. Out of scope can redirect ("I can help with intake; a clinician
+   handles clinical questions") instead of dead-ending. Warn or block a social security
+   number or a card number when this chat is not supposed to collect them. The check itself
+   is config: type, action (`block`, `redirect`, `warn`), the sentence the user sees,
+   thresholds. A new jailbreak pattern does not require a new container. Argument checks are
+   the same class aimed at the vendor: types, required fields, a date that is not in the
+   past, a `patient_id` that matches the authenticated user. A past-dated booking never
+   reaches the adapter.
+2. **Output policy**: Runs at (5), the last look before a person sees tokens, and before
+   those tokens are stored as fact in the session. Use it when the harm is what the user
+   would read or what you would persist. It fails when the bad action already committed at
+   Execute. PII leakage is redact or review. A clinic phone number and a patient social
+   security number are different leaks. Blind redact can be as wrong as a blind send.
+   Grounding cross-checks a claim about coverage or policy against retrieved hits or a
+   structured source. An unverifiable claim is hedged, flagged, or blocked. Brand and
+   regulatory tone carry real weight in health and finance.
 
 | Severity | Example | Action |
 |---|---|---|
-| Low | slightly informal | log |
-| Medium | unverifiable claim | transform (hedge) |
-| High | exposed PAN, invented legal right | block + fallback |
+| Low | Slightly informal tone | Log |
+| Medium | An unverifiable claim | Transform (hedge) |
+| High | An exposed card number (PAN), or an invented legal right | Block, plus a fallback sentence |
 
-Blocking without a fallback is how you generate support tickets that
-say "the bot just stopped." Always have a safe sentence.
+A block with no fallback is the ticket that says the bot stopped. Always have a safe
+sentence.
 
-### Behavioral policies
+3. **Behavioral policy**: Runs at (2) and (3). It chooses which tools may run, in which
+   order, with which authority. Use it when the harm is an action. It fails when you only
+   score the final paragraph. Content filters do not see these cases. A specialist booked
+   with no referral on file. Cancel and rebook of the same slot in one turn: stop, ask, and
+   leave both calls unexecuted until someone confirms. An address update, then a notice sent
+   to the old address: reorder, or wait until the update finishes. Insurance verification
+   failed, then a book anyway: deny, and say why. Three booking attempts in the session,
+   then stop. Human confirmation is a real UI step. Irreversible or expensive tools
+   (`is_read_only=false`, or high cost on the operational layer) default to confirm in
+   production until a risk review says otherwise. A cross-tool rule needs the whole proposed
+   set for the session, not one schema at a time, which is why the check sits next to
+   Execute. The prompt stays descriptive. Discover should already have hidden refund from
+   the marketing bot. This policy is the second line when the model asks anyway.
 
-Operate at (2) and (3): **which tools, in which order, with which
-authority.** This is the layer that makes guardrails *execution*
-policies.
+## 8. Policy as configuration
 
-Examples that content filters will never catch:
+Application authors write flows. Compliance writes what must never happen. Security writes
+injection rules. Operations writes rate limits. Python in the assistant repo makes Sam or
+Sarah the bottleneck for every change, and makes audit a git blame.
 
-- Book specialist without referral on file.
-- Cancel and rebook the same slot in one turn (confused model) —
-  intervene, ask, and leave both calls unexecuted until confirmed.
-- Update address then notify the old address — reorder or gate on
-  completion.
-- Failed insurance verify then book anyway — deny with an explanation.
-- Session budget: three booking attempts, then stop.
+* **The document**: Something a non-engineer can read. Application id, version of the policy
+  document, input checks (topic, injection, PII), output handlers by severity, behavioral
+  rules (allow lists, confirmation, cross-tool order), and actions: block, redirect, warn,
+  transform, confirm, log_only. It lives in version control. Compliance and security review
+  it, not only the assistant author. Merge hot-loads the platform. Adding a blocked topic
+  does not redeploy the assistant. The policy version is on every audit row, so "what was
+  live on Tuesday" has an answer. An `if topic == diagnosis` branch in the assistant is a
+  second copy, and it will drift.
+* **Three readers of the same record**: Developers need the inspection point, the policy
+  name, and the action, or a refusal is a hang. Operations need block rate, confirm rate,
+  breaker opens, p95 of Execute, and cost per tool. Compliance needs what was proposed, what
+  ran, what was denied, and who confirmed, retained for the regulation rather than until the
+  disk fills. Record allows too. Allows are how you see false negatives. Classifier policies
+  store scores so a threshold change is a measurement. When raw PII cannot sit in the trace
+  lake, store a hash and join it to the session id and the trace id. This service emits that
+  safety span. A graph of "booking denials because the referral was missing" is how you tell
+  a product bug from a control that worked.
+* **The socket, not the loop**: Choosing the next tool, and whether to try again, is the
+  caller's loop. This service is the socket that loop uses.
+* **A tool changes the world**: Reading a policy PDF is retrieval from the document library.
+  Filing a ticket is a tool. A search tool that also emails Legal mixes the two permissions
+  until both rot.
+* **Same trace as generation**: Execute, breaker state, policy decisions, and credential
+  retrieves belong on the trace beside the model call. This service emits that span.
 
-Human confirmation is a behavioral action, with a real UI step behind
-it. Irreversible or expensive tools (`is_read_only=false`, high cost
-metadata) default to confirm in production until a risk committee says
-otherwise.
+### Watch for
 
-Cross-tool rules need a **session-shaped view** of proposed actions,
-with the full proposed set visible rather than one schema at a time.
-That is why this lives next to Execute, with room for the prompt to
-stay descriptive rather than authoritative.
-
-Least privilege: Discover should have already hidden the refund tool
-from the marketing bot. Behavioral policy is defense in depth when the
-model still asks.
-
-## Declarative policy and observability
-
-Application authors write flows. Compliance writes what must never
-happen. Security writes injection rules. Ops writes rate limits. If all
-of that is Python in the assistant repo, you have made Sarah (or Sam)
-the bottleneck for every rule change, and you have made audit a git
-blame exercise.
-
-### Policy as configuration
-
-Policies specify **what** to check, **when**, and **what to do**. YAML
-(or equivalent) that a non-engineer can read is the point:
-
-- application id
-- version of the *policy document*
-- input checks (topic, injection, PII)
-- output handlers by severity
-- behavioral rules (tool allow lists, confirmation, cross-tool)
-- actions: block, redirect, warn, transform, confirm, log_only
-
-Store in version control. Review like code, with **different
-reviewers** (compliance, security). On merge, the platform hot-loads.
-No assistant redeploy to add a blocked topic.
-
-Policy version appears on every audit row so you can answer "what rule
-was live on Tuesday."
-
-Application code should leave topic checks in the policy document. An
-`if topic == diagnosis` branch in the assistant is a second, drifting
-copy of the rule.
-
-### Making safety visible
-
-A silent block is how you get "the assistant refused and hung up" with
-no way to tell legitimate enforcement from a false positive from a
-buggy threshold.
-
-Three audiences:
-
-- **Developers** — why this request died (inspection point, policy
-  name, action).
-- **Operations** — rates: block rate, confirm rate, breaker opens,
-  p95 Execute, cost per tool.
-- **Compliance** — what was proposed, what ran, what was denied, who
-  confirmed. Retention that matches your regulation, sized for the
-  retention policy rather than the log disk alone.
-
-Every evaluation produces a record, including **allows**. Allows are
-how you measure false-negative risk. For classifier policies, store
-scores so you can retune thresholds without folklore.
-
-Hash content when you cannot retain raw PII in the same lake as traces.
-Join hashes to Session and observability ids. This chapter's job is to
-**emit** the safety span; the store-and-experiment layer lives with
-observability.
-
-If you cannot graph "booking denials because missing referral" you
-cannot tell a product bug from a successful control.
-
-## What this service is not
-
-It is not the agent loop. ReAct, which tool to pick, whether to try
-again: that decision layer calls this service. This service is the
-**safe socket** that loop uses.
-
-It is not Data. Reading a policy PDF is retrieval. Filing a ticket is a
-tool. Mixing them ("the search tool that also emails Legal") is how
-permissions rot.
-
-It is not Observability, but it is a noisy citizen of it. Execute,
-breaker state, policy decisions, credential retrieves belong on the
-same trace as the model generation.
+* A silent block. You cannot tell enforcement from a false positive from a bad threshold.
+* A rule that ships only as prompt text. The config document never sees it, and Tuesday's
+  audit row cannot name it.
 
 ## Check yourself
 
-1. A team says "we have tools; they're Python functions in the
-   workflow." Map Register, Discover, Execute, and Validate to what
-   they are missing, and name one incident each verb would have
-   shortened.
-2. Draw the three layers of a tool definition. Which layer is safe to
-   send to the model, and which layer should never appear in a prompt?
-3. Two squads register `check_status`. How does namespacing prevent the
-   collision, and how does capability discovery still find "payment
-   status" without guessing the dotted name?
-4. Why do major versions coexist instead of overwrite? Give a schema
-   break and a *behavior* break that JSON Schema would not catch.
-5. Credential_ref vs the secret in `.env`: list three places the secret
-   must never appear, and which CredentialStore retrieve check stops a
-   confused-deputy tool from loading the wrong token.
-6. MCP: explain N×M → N+M → M for *your* org's app count and SaaS
-   count. What work remains at M because the protocol does not specify
-   it?
-7. A community MCP server needs `GITHUB_TOKEN` in the environment.
-   How does `register_mcp_server` on the platform change that story
-   without forking the server?
-8. Circuit breaker vs timeout vs retry budget: which one you turn when
-   the vendor is 100% failing, which when a single call hangs, and
-   which you *disable* when `is_idempotent` is false?
-9. Content filter vs execution policy: give one clinic (or your domain)
-   failure that a toxicity classifier will not catch. At which
-   inspection point (1–5) would you enforce it?
-10. Compliance wants to add a blocked topic tomorrow without a
-    deploy. What artifact do they change, who reviews it, and what
-    must appear in the audit row so Sarah can debug a false positive?
+1. A team says their tools are Python functions in the workflow. What are they missing
+   across Register, Discover, Execute, and Validate, and which incident does each verb
+   shorten?
+2. Draw the three layers of a tool definition. Which layer may go to the model, and which
+   layer must stay out of the prompt?
+3. Two squads both want `check_status`. How does a namespace stop the collision at register
+   time, and how does a capability tag still find payment status without the dotted name?
+4. Why do `1.4.2` and `2.0.0` coexist? Give one schema break and one behavior break that
+   JSON Schema would not show.
+5. Name three places a secret must never appear. Which credential-store check stops the
+   booking tool from loading the warehouse admin token?
+6. For an org with N apps and M providers, what do N×M, N+M, and M each buy? Which work is
+   still yours at M because MCP does not specify it?
+7. A community MCP server expects `GITHUB_TOKEN` in the environment. How does
+   `register_mcp_server` change that without forking the server?
+8. The vendor is failing every call, a single call hangs, and `is_idempotent` is false.
+   Which of breaker, timeout, and retry budget do you use for each?
+9. Name a clinic failure a toxicity classifier will not catch. At which inspection point,
+   from (1) through (5), do you enforce it?
+10. Compliance wants a new blocked topic tomorrow, without a deploy. What do they change,
+    who reviews it, and what must the audit row contain so Sarah can debug a false positive?

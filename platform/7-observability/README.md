@@ -1,767 +1,442 @@
 # 7. Observability and experimentation
 
-Companion notes for **Chapter 7** of *Designing AI Systems* (MEAP, Suhas
-Suresha and Dewang Sultania; Manning). This MEAP's printed contents page is
-**single-level** (nine chapter titles). The headings below follow the
-chapter's actual topics.
+Companion notes for **Chapter 7** of *Designing AI Systems* (Suhas Suresha and Dewang Sultania; Manning MEAP).
 
-This chapter is how the platform answers **was the answer any good**,
-not only **did the box stay up**. Model, Session, Data, Tools, and
-Guardrails already emit signals. Without a place to join them — traces,
-scores, dollars, experiments — you get six log streams and a finance
-ticket. Skip this chapter and every prompt change is a hope, every
-invoice is a mystery, and "quality" lives in Slack anecdotes.
+This chapter is how the platform answers whether an answer was any good, not only whether the
+process stayed up. Model, Session, Data, Tools, and Guardrails already emit signals. Observability
+joins those signals on one trace: what happened, what it cost, and a score that may arrive after the
+user already has the reply. Experimentation turns the weak traces into a versioned change, an
+offline comparison, and a sticky A/B you can promote or drop. Afterward you can name a trace, a
+span, a generation, a score, and which clock you are on: offline, online, human, or an experiment.
 
-The folder stays on the **Observability Service** and the
-**Experimentation Service**: the fleet-wide data model, contracts, and
-improvement loop. Agent-local eval loops, critics, and lab notebooks
-belong elsewhere; here the platform stores scores and joins them to
-cost.
+## 1. A green dashboard can still be a bad answer
 
-## The mental model
+Uptime, latency, error rate, and saturation still page someone. An AI workflow that returns HTTP 500
+is still an incident. The extra job is to judge whether the output was useful, grounded, safe, and
+worth the tokens, on the same request that touched Session, Data, Guardrails, and Model.
+
+* **Sarah's intake prompt**: She ships a new patient-intake prompt. p95 is unchanged, the error rate
+  is unchanged, and the Model Service is up. Patients say the assistant is less helpful. It asks
+  them to repeat facts already in the session, and it takes more turns. Nothing there is an HTTP
+  error. The system is running. It is working poorly.
+* **The deterministic lie**: A normal service that is up and returns 200 almost certainly returned
+  the correct bytes. Same code, same input, same output. A generation does not give you that
+  bargain.
+* **Unstable outputs**: The same inputs can yield different text. Temperature, routing, a cache
+  miss, and provider drift all move the words. A successful generation can still be useless.
+* **Assembled inputs**: The model sees a pipeline, not a stored request. Which chunks Data returned,
+  how much history Session could fit, which model survived routing and fallback, and which guardrail
+  rewrote a sentence all change the answer. A healthy Model Service can still answer from a bad
+  retrieval.
+* **Two rings**: Keep latency and errors as the inner ring. Wrap them with tokens, model identity,
+  retrieval hit quality, safety actions, response quality scores, and cost per workflow. A slow
+  request can be a great answer, such as a long tool loop that did the research. A fast 200 can be a
+  hallucination. An on-call page that only fires on 5xx will never fire because patients are
+  repeating themselves.
+
+## 2. One user request is one trace
+
+One patient question is several service calls. Quality and cost have to share a `trace_id`, or you
+will tune whichever dashboard is easiest to graph. Four log formats, token counts that never leave
+the Model Service, and a prompt "v7" nobody can A/B are the sprawl this join exists to stop.
+
+* **Where the id starts**: The gateway authenticates and starts the trace. Every later hop must
+  carry the same id.
+* **A typical hop**: Session loads history and maybe memories. Data searches an index. Guardrails
+  inspect the input. Model generates, more than once if tools loop. Guardrails inspect tool
+  arguments and the output. Session stores the exchange.
+* **Why local timings lie**: A request that took four seconds instead of one leaves a timing in each
+  service. Without a shared `trace_id`, debugging is lining up timestamps and hoping the clocks
+  agree. The waterfall is the honest answer to where the time and the tokens went.
+* **False blame**: "The model is slow" dies when the waterfall shows Data at 3.2s and Model at
+  400ms. "The model hallucinated" dies when the generation span shows empty retrieval and a
+  truncated session.
+* **Propagation**: Put the context on every internal call. The teaching transport is gRPC metadata:
+  trace id, span id, workflow id. A service that cannot join the tree is an observability hole. A
+  raw HTTP call that skips the SDK splits the tree. Treat an unparented span as a bug.
 
 ```
   one user request
         |
         v
-  +---------------- TRACE (one hop through the platform) -------------+
-  |  span: sessions.get          history, tokens in window            |
-  |  span: data.search           hits, relevance                      |
-  |  span: guardrails.input      policy, action                       |
-  |  GENERATION: models.chat     model, tokens, $, TTFT               |
-  |  span: tools.execute         (if the loop acted)                  |
-  |  span: guardrails.output                                          |
-  |  span: sessions.append                                            |
-  |  scores ........ attached later (heuristic / judge / human)       |
-  +-------------------------------------------------------------------+
-        |                                      ^
-        v                                      |
-  Observability Service                  Experimentation Service
-  "what happened, what did              "what should we change,
-   it cost, was it good"                 did the change help"
-        |                                      ^
-        +---- low-scoring traces, datasets ----+
-              offline eval, A/B, annotate
+  TRACE
+    span: sessions.get
+    span: data.search
+    span: guardrails.input
+    GENERATION: models.chat    model, tokens, $, TTFT
+    span: tools.execute
+    span: guardrails.output
+    span: sessions.append
+    scores .... attached later (heuristic / judge / human)
+        |
+        +-- Observability:   what happened, what it cost, was it good
+        +-- Experimentation: what to change, did the change help
 ```
 
-The one sentence to remember: **quality and cost must share a
-trace_id**, or you will optimize the dashboard that is easiest to
-graph.
+## 3. Sessions, traces, spans, generations, and scores
 
-Sprawl here looks like four log formats, token counts that never leave
-the Model Service, and a prompt "v7" that nobody can A/B. Offline vs
-online eval, human queues, and A/B hygiene are product choices; this
-chapter is the **services** that implement them.
+Start from the question you must answer. The primitive is whatever you need in order to reconstruct
+that question. Vendor product names come later.
 
-## Why AI systems need specialized observability
+* **Trace**: The whole journey of one user request. Input, output, duration, total cost, workflow
+  id, user id, tags. "What happened on this request?" is a trace.
+* **Span**: One unit of work inside the trace: a session load, a search, a guardrail pass. Spans
+  nest through `parent_span_id`. The waterfall is that nesting plus duration. The root span is the
+  request as the user felt it, usually opened at the gateway.
+* **Generation**: A span with LLM fields the rest of the platform should not invent: model name,
+  prompt tokens, completion tokens, cost, time to first token, cache hit, provider, finish reason.
+  Index generations on their own so "GPT-4o calls over $0.10" is a query, not a JSON grep.
+* **Session**: A group of traces, the same way the Session Service groups messages. A session view
+  answers "this user had a bad afternoon." One trace cannot.
+* **Score**: A named judgment (helpfulness, completeness, retrieval relevance, safety) attached to a
+  trace, a span, or a generation, with a source: heuristic, judge, or human. Scores often land after
+  the user already has the reply. That lag is the design. Do not hold the HTTP response for a second
+  model call.
 
-Traditional monitoring is not wrong. Uptime, latency, error rate, and
-saturation still matter. An AI workflow that 500s is still a
-production incident. The gap is what "healthy" *means*.
+Walk one question through the tree: "Can I bring medical records digitally, or do I need paper
+copies?"
 
-Sarah ships a new patient-intake prompt. Dashboards stay green:
-p95 is the same, error rate is the same, the Model Service is up.
-Patients start saying the assistant is less helpful. It asks them to
-repeat facts already in the session. It takes more turns. None of
-that is an HTTP error. The system is running. It is **working
-poorly**.
+* **Gateway**: Creates `trace_id` and binds it to the patient's session.
+* **Session span**: Twelve prior messages, about 45ms, about 2,100 tokens of history charged against
+  the window.
+* **Data span**: Hybrid search, k hits, latency, index name. Child logs may list document ids. The
+  span holds the aggregate.
+* **Guardrails input span**: Allowed, blocked, or transformed.
+* **Generation**: The Model Service call. Tokens, cost, time to first token, and the model that
+  routing actually used.
+* **Close**: Guardrails output span, then a session append span.
+* **Scores, later**: An automated key-element check in about 20ms, an LLM judge on a 10% sample, or
+  a human next Tuesday.
 
-That is the specialized job: measure whether the *output* is useful,
-grounded, safe, and worth the tokens — and join that measurement to
-the same request that hit Session, Data, Guardrails, and Model.
-
-### From infrastructure health to output quality
-
-Deterministic services have a convenient lie: if the process is up
-and the status is 200, the output is almost certainly correct. Same
-code, same input, same bytes.
-
-Generative systems break the lie in two directions.
-
-- **The same inputs can yield different outputs.** Temperature,
-  routing, cache misses, and provider drift all move the text. A
-  "successful" generation can be useless.
-- **The inputs themselves are assembled, not stored.** Which chunks
-  Data returned, how much history Session could fit, which model
-  survived routing and fallback, which guardrail rewrote a sentence:
-  quality is a *pipeline* property. A healthy Model Service can still
-  answer from a bad retrieval.
-
-So you still keep SLOs for latency and errors. You add dimensions
-that a web monolith never needed: tokens, model identity, retrieval
-hit quality, safety actions, **response quality scores**, and **cost
-per workflow**. Figure the chapter wants you to hold: traditional
-metrics are the inner ring; AI-specific signals wrap them. Do not
-throw away the inner ring. Do not stop there.
-
-A slow request can be a *great* answer (long tool loop, good
-research). A fast 200 can be a hallucination. If your on-call only
-pages on 5xx, you will never page on "patients repeating themselves."
-
-### Cross-service correlation
-
-One patient question is not one service call. A typical hop:
-
-1. Gateway authenticates and **starts a trace**.
-2. Session loads history (and maybe memories).
-3. Data searches an index.
-4. Guardrails inspect the input.
-5. Model generates (maybe several times if tools loop).
-6. Guardrails inspect the output (and tool args in between).
-7. Session stores the exchange.
-
-If that request took four seconds instead of one, each service has a
-local timing. Without a **shared trace_id** on every hop, debugging
-is "align timestamps and pray the clocks agree." Distributed tracing
-is not a nice-to-have visualization. It is the only honest answer to
-"where did the time and the tokens go."
-
-Correlation is also how you stop false blame. "The model is slow"
-dies when the waterfall shows Data at 3.2s and Model at 400ms. "The
-model hallucinated" dies when the generation span shows empty
-retrieval and a truncated session.
-
-Propagate context on every internal call (the book uses gRPC
-metadata: trace id, span id, workflow id). If a new service cannot
-join the tree, it is an observability hole, not a "lean
-microservice."
-
-### Cost as the bridge to experimentation
-
-Classical app cost tracks CPU and RAM. It is dull and similar across
-requests. GenAI cost tracks **tokens**, which swing with history
-length, retrieved context, model choice, retries, and cache hits.
-The Model Service already records per-request dollars. That is how
-you investigate the one call that cost fifty cents instead of two.
-
-Finance and engineering also need the layer *above* the request:
-spend by **team**, by **workflow**, by **model**, trends, and
-projections. Observability is the aggregator. Model Service remains
-the source of the leaf numbers.
-
-Knowing spend is not knowing value. A workflow at $1,400/month might
-be excellent. Another at $400 might be burning tokens on padded,
-unhelpful answers. **Cost without a score cannot tell you which.**
-Scores without cost cannot tell you whether a quality win is
-affordable. The bridge to experimentation is exactly that join: a
-trace that carries dollars *and* quality, so a prompt change can be
-judged on both.
-
-The mystery invoice becomes a drill-down: total → team → workflow →
-model → the generation that actually happened.
-
-## The observability data model
-
-Do not start from vendor product names. Start from **questions**.
-The primitives fall out of what you must reconstruct.
-
-### Derive the model from questions
-
-**What happened on this user request?** You need a **trace**: the
-whole journey, with input, output, duration, total cost, workflow
-id, user id, tags. Inside it, **spans**: units of work (session
-load, search, a guardrail pass). Spans nest. The waterfall is the
-nesting plus duration.
-
-**Which of those units was an LLM call?** A generation is a span
-with extra fields the rest of the platform should not fake: model
-name, prompt/completion tokens, cost, time to first token, cache
-hit, provider, finish reason. Index generations as first-class
-objects so "show me GPT-4o calls over $0.10" is not a JSON grep.
-
-**Which conversation was this turn part of?** A **session** groups
-traces the way the Session Service groups messages. Session-level
-views answer "this user had a bad afternoon," which a single trace
-cannot.
-
-**Was the result any good?** A **score** attaches a named metric
-(helpfulness, completeness, retrieval relevance, safety) to a
-trace, a span, or a generation, with a source (heuristic, judge,
-human). Scores often arrive **after** the user already has the
-reply. That asynchrony is a feature: do not hold the HTTP response
-for a second model call.
+Six spans and one generation is a teaching size. Tool loops grow the tree. The shape stays one tree,
+one `trace_id`, and scores as decorations that may lag.
 
 ```
-  SESSION  (conversation, many requests)
+  SESSION  (many requests, one conversation)
      |
-     +-- TRACE  (one user request)
-            |
-            +-- SPAN  (session.get)
-            +-- SPAN  (data.search)
-            |      +-- logs: per-hit scores, filters
-            +-- GENERATION  (models.chat)   <-- specialized span
-            |      +-- SCORE  (grounding)     may attach here
-            +-- SPAN  (guardrails.output)
-            +-- SCORE  (helpfulness)        may attach on the trace
+     +-- TRACE  (this user request)
+            +-- SPAN   session.get
+            +-- SPAN   data.search
+            +-- GENERATION  models.chat
+            |      +-- SCORE  grounding
+            +-- SPAN   guardrails.output
+            +-- SCORE  helpfulness   (often on the trace, often late)
 ```
 
-If you only store logs, you cannot draw the waterfall. If you only
-store spans, you cannot explain *why* a guardrail almost fired. If
-you only store metrics, you cannot debug one patient.
+Logs and metrics sit beside those five primitives. The primitives are per request. Logs explain one
+span. Metrics describe a fleet.
 
-### How the primitives connect: one request
+* **Structured log**: An event during a span. The guardrail span says "35ms, success." The logs say
+  "rule A 0.91 pass, rule B 0.48 near-miss, rule C transform." A cache lookup may emit nothing. A
+  messy policy may emit a dozen events. Every event carries `trace_id` and `span_id`. The span is
+  what happened and how long. The log is why it went that way.
+* **Metric**: A counter or a histogram you refuse to recompute from raw logs when a dashboard loads.
+  Counters cover requests, tokens, and dollars. Histograms cover latency and relevance. Labels such
+  as provider, model, workflow id, and team let one metric name answer many cuts. Metrics say
+  Tuesday's p95 moved. They will not show Maria's four-second trace. Keep all three, or you can see
+  a fleet and still be unable to debug one patient.
 
-Walk a concrete question: "Can I bring medical records digitally or
-do I need paper copies?"
+Logs alone cannot draw the waterfall. Spans alone cannot explain why a guardrail almost fired.
+Metrics alone cannot open one patient's request.
 
-- Gateway creates `trace_id`, binds it to the patient's session.
-- Session span: twelve prior messages, ~45ms, ~2,100 tokens of
-  history charged against the window.
-- Data span: hybrid search, k hits, latency, index name. Child logs
-  can list document ids; the span holds the aggregate.
-- Guardrails input span: allowed / blocked / transformed.
-- **Generation:** the Model Service call — the thick box in the
-  book's figure. Tokens, cost, TTFT, model after routing.
-- Guardrails output span.
-- Session append span.
-- **Scores** land later: maybe an automated key-element check in
-  20ms, maybe an LLM judge on a 10% sample, maybe a human next
-  Tuesday.
+## 4. The Observability Service contract
 
-Six spans and one generation is a teaching size. Production traces
-grow when tools loop. The shape does not change: one tree, one
-`trace_id`, scores as decorations that may lag.
+The surface is a small gRPC API with an SDK in front, the same shape as the other platform services.
+The twist is direction. Most platform services are called because the workflow wants an answer.
+Observability is mostly a receiver. The teaching count is fourteen operations. An implementation may
+split further. Ingest paths are cheap and numerous. Query paths are richer and rarer.
 
-### Logs and metrics complement the request-level model
+1. **Logs**: `IngestLogs` and `QueryLogs`. Individual records, searched by fields. Use them when the
+   question is what happened inside one span. Folding logs into the metrics call forces one store to
+   do two jobs badly.
+2. **Metrics**: `RecordMetrics` and `QueryMetrics`. Numeric series, queried by time window and
+   labels. Use them for rates and percentiles. A trace query will not draw Tuesday's p95 cheaply.
+3. **Tracing**: `RecordSpan`, `RecordGeneration`, `GetTrace`, and `QueryTraces`. Generation is its
+   own call so LLM columns stay off ordinary spans. Get is "this id." Query is "slow traces on
+   workflow X yesterday."
+4. **Scores**: `RecordScore`, plus a query. It arrives late and must attach to an existing trace,
+   span, or generation. It must not rewrite the history of the request.
+5. **Cost**: Reports and budgets derived from generation records plus labels such as team and
+   workflow. A drill-down, not a second ledger. The Model Service remains the source of the leaf
+   dollars.
+6. **Health**: The service's own live and ready checks. Skipping them on the telemetry service is
+   how you lose the recorder and notice last.
 
-The five primitives (session, trace, span, generation, score) are
-**per request**. Two other kinds of data sit beside them.
+* **Ingest stays off the user path**: When Model finishes a call, it publishes asynchronously. If
+  Observability is down, the user's answer still ships. Buffer locally and retry. Waiting inside
+  `models.chat` for `RecordGeneration` turns telemetry into a single point of failure, and it fails
+  while looking like care.
+* **Query is the other shape**: Operators, dashboards, experiment pipelines, and cost reports. A
+  second of latency is acceptable. Scores may appear eventually. The ingest API is not the query API
+  with extra fields.
+* **Who may read**: Every replica may ingest. Few principals may call `QueryTraces` and see raw
+  prompts. A generation contains user text and sometimes retrieved documents. Treat it as sensitive.
 
-**Structured logs** are events *during* a span. The guardrail span
-says "35ms, success." The logs say "rule A 0.91 pass, rule B 0.48
-near-miss, rule C transform." A cache lookup might emit zero logs.
-A messy policy evaluation might emit a dozen. Always include
-`trace_id` and `span_id` so an operator can open the span and pull
-the events. The span is *what* and *how long*. The logs are *why
-this way*.
+### Watch for
 
-**Metrics** are aggregates you must not recompute from raw logs at
-dashboard time: counters (requests, tokens, dollars) and histograms
-(latency, relevance). Labels (provider, model, workflow id, team)
-make one metric name answer many cuts. Metrics tell you Tuesday's
-p95 moved. They will not show you Maria's four-second trace. That
-is why you keep all three.
+* A flush that raises into `models.chat` pages users for a telemetry outage.
+* When the local buffer hits its cap, drop or shed and emit a metric that you dropped. A silent drop
+  looks like a quiet day.
+* Designing `IngestLogs` as if an analyst will use it interactively makes the hot path slow and the
+  query path weak.
 
-## The Observability Service contract
+## 5. What a log line, a metric, and a waterfall contain
 
-Same pattern as Model, Session, Data, Tools: a small gRPC (or
-equivalent) surface, SDK in front. The twist is **traffic
-direction**. Most platform services are *called for an answer*.
-Observability is mostly a **receiver**.
+The contract is verbs. Operators need one event shape so a slow trace does not end in four clusters
+over SSH.
 
-### Walking through the contract
+Every log event carries an id, a timestamp, a service, a severity, an event type, a message,
+`trace_id`, `span_id`, a workflow id, and a user id or a hashed stand-in. Then two maps: string
+attributes and numeric attributes. The split keeps `tokens=2100` queryable as a number.
 
-Group operations by storage physics, not by taste.
+* **Model keys**: Provider, model, cache hit, fallback reason, token counts, estimated cost.
+* **Data keys**: Index, hit count, top score, filter keys. Raw chunk text only when policy allows
+  it.
+* **Guardrail keys**: Policy name, action, confidence, which rule.
+* **Tool keys**: Tool name, version, breaker state, retry count.
 
-**Logs** — `IngestLogs` / `QueryLogs`. Individual records, search by
-fields.
+Same envelope, different keys. Open the bad span, then query logs for that `span_id`.
 
-**Metrics** — `RecordMetrics` / `QueryMetrics`. Numeric time series,
-query by window and labels. Do not merge logs and metrics into one
-RPC. You would force one store to do two jobs badly.
+Name each metric once. The teaching pattern is a constants class prefixed like
+`ai.platform.{service}.{metric}`. `llm_latency_ms` in one repo and `model.duration` in another is
+how the same latency gets two dashboards and zero trust.
 
-**Tracing** — `RecordSpan`, `RecordGeneration`, `GetTrace`,
-`QueryTraces`. Generation is separate so you can index LLM fields
-without stuffing them onto every span. Get is "this id." Query is
-"slow traces on workflow X yesterday."
+1. **Counters**: Requests, tokens, cost, cache hits, guardrail blocks. A process only increments
+   them. The time-series store computes the rate. Use a counter for a total. A counter cannot tell
+   you a percentile.
+2. **Histograms**: Latency, time to first token, retrieval scores. The numbers you will page on are
+   p50, p95, and p99. The mean of a heavy tail hides the incident. Use a histogram when the tail is
+   the outage.
 
-**Scores** — `RecordScore` (and a query). Arrives late. Must attach
-to an existing trace/span/generation without rewriting history.
+Slice on `provider`, `model`, `workflow_id`, `team`, and maybe `cache`. Cardinality is a budget. A
+user id label will melt the time-series store. High-cardinality truth belongs on the trace.
 
-**Cost** — reports and budgets derived from generation records plus
-labels (team, workflow). Drill-down, not a second ledger.
+Each service already has domain structs. `RequestMetrics` comes from the Model Service. Tools and
+Guardrails already emit evaluation records. Observability publishes those structs under
+`PlatformMetrics` names through `record_counter` and `record_histogram`. The Model Service does not
+learn a dashboard product. Observability does not learn a vendor usage object.
 
-**Health** — the service's own live/ready, like every other
-platform process. Ironic to skip.
+Guardrail block rate is a first-class metric. Block rate alone is a vanity number. Block rate plus
+the policy name plus the trace is how a bad threshold gets caught.
 
-Fourteen operations across those concerns is the book's teaching
-count. Your implementation can split further. The invariant is:
-ingest paths are cheap and numerous; query paths are richer and
-rarer.
+Debug in this order. Skipping to the last step is Sam shipping v8 of a prompt.
 
-### Ingestion vs query
-
-Ingestion is high-throughput and **must not sit on the user path**.
-When Model finishes, it publishes asynchronously. If Observability
-is down, the user's answer still ships. Buffer locally and retry.
-If you make `models.chat` wait on `RecordGeneration`, you have
-turned telemetry into a single point of failure — the worst kind,
-because it fails *while looking like diligence*.
-
-Corollary: the client in each service batches and flushes on a
-timer or size threshold. Flush failure stays in the buffer (up to a
-cap). Drop-oldest or shed traces if the cap hits; emit a metric
-that you dropped. Never block the assistant.
-
-Query is the opposite shape: operators, dashboards, experiment
-pipelines, cost reports. Latency of a second is fine. Consistency
-can be "eventual enough that scores appear." Do not design the
-ingest API as if it were the query API with extra fields.
-
-Authz differs too. Every replica may ingest. Few principals may
-`QueryTraces` with raw prompts. Treat generations as sensitive:
-they contain user text and sometimes retrieved documents.
-
-## Structured logging, metrics, and distributed tracing
-
-The contract is verbs. This section is what the records *contain*
-and how you debug with them together.
-
-### Structured logging for AI-specific debugging
-
-JSON-with-a-message is not the win. The win is a **shared event
-shape** plus AI fields that grep can actually find.
-
-Every event: id, timestamp, service, severity, event type, message,
-`trace_id`, `span_id`, workflow id, user id (or a hashed stand-in).
-Then two maps: string attributes and numeric attributes. That last
-split keeps "tokens=2100" queryable as a number, not a string you
-parse in panic.
-
-What goes in the maps is domain-shaped:
-
-- Model: provider, model, cache hit, fallback reason, token counts,
-  estimated cost.
-- Data: index, hit count, top score, filter keys (not raw chunk
-  text unless policy allows).
-- Guardrails: policy name, action, confidence, which rule.
-- Tools: tool name, version, breaker state, retry count.
-
-Same envelope, different keys. An operator investigating a slow
-trace opens the bad span, then queries logs where `span_id` matches.
-They should not SSH to four clusters.
-
-Do not log secrets, full credential values, or needless PII. Hash
-or drop. Observability that cannot go to the vendor SOC2 review is
-not production observability.
-
-### Metrics collection
-
-Name metrics once. The book uses a constants class with a prefix
-like `ai.platform.{service}.{metric}`. Chaos is `llm_latency_ms` in
-one repo and `model.duration` in another.
-
-Two families:
-
-- **Counters** — requests, tokens, cost, cache hits, guardrail
-  blocks. They only go up (per process); the TSDB rates them.
-- **Histograms** (or summaries) — latency, TTFT, retrieval scores.
-  You care about p50/p95/p99, not the mean of a heavy tail.
-
-Dimensions you will actually slice: `provider`, `model`,
-`workflow_id`, `team`, maybe `cache`. Cardinality is a budget. User
-id as a label will melt Prometheus. High-cardinality truth belongs
-on traces.
-
-Each service already *has* domain structs (`RequestMetrics` from the
-Model Service, evaluation records from Tools and Guardrails).
-Observability does not reinvent them. It **publishes** them into
-the standard names.
-
-### Distributed tracing and the debug workflow
-
-Logs: events in a service. Metrics: shapes over thousands of
-requests. Tracing: **this** request, across services.
-
-A trace is a tree. Root span = the request as the user experienced
-it (often started at the gateway). Children nest via
-`parent_span_id`. Generations are children with extra columns.
-
-Debug workflow you should be able to run without folklore:
-
-1. Alert or complaint ("intake is slow" / "answers got worse").
-2. Metrics: is it a fleet problem or a slice (one model, one
-   workflow)?
-3. Query traces for that slice: duration, cost, score.
-4. Open one representative waterfall. Name the slow or empty span.
+1. Start from an alert or a complaint: intake is slow, or answers got worse.
+2. Read metrics. Decide whether it is the whole fleet or a slice: one model, one workflow.
+3. Query traces in that slice for duration, cost, and score.
+4. Open one waterfall. Name the slow span or the empty span.
 5. Pull logs for that `span_id`.
-6. If quality: look at attached scores and at retrieval/generation
-   payloads (with ACL).
-7. Only then change **one** thing (prompt, chunk k, model) and
-   measure again — which is the Experimentation half.
+6. If the complaint is quality, read the attached scores and the retrieval or generation payloads.
+   Access control still applies.
+7. Change one thing — a prompt, a chunk `k`, or a model — and measure again.
 
-If you skip to step 7, you are Sam shipping v8 of a prompt.
+## 6. Telemetry without the author wrapping every call
 
-Context propagation is mechanical: inbound headers → context var →
-outbound headers. Lose it once (a raw HTTP call that is not the
-SDK) and the tree splits. Treat "unparented spans" as a bug.
+A workflow author calls `platform.models.chat` and `platform.data.search` and does not open spans.
+If they must, the platform missed the developer promise. Three layers cover platform calls. A fourth
+covers glue the platform cannot see.
 
-## How platform services report telemetry
+* **TracedService**: Every platform service extends a base that holds an `ObservabilityClient` and
+  two context managers. `trace_operation` wraps session get, search, validate, tool execute, and any
+  unit that is not an LLM completion. `trace_generation` wraps the LLM call and records model,
+  tokens, cost, and time to first token. They start the primitive, time it, record errors, and yield
+  a child context so nested calls hang off the right parent. The workflow never imports them. The
+  Model Service enters `trace_generation` itself. A service that skips the base class is a hole in
+  every waterfall.
+* **Domain publishers**: One generation record is one call. Operations also need rates: request
+  rate, latency histograms, error ratio, cost rate, cache hit ratio, guardrail block rate, and the
+  distribution of retrieval `k`. Publish the dataclass you already have. Do not invent a parallel
+  metrics schema inside the domain service.
+* **ObservabilityClient**: The path out of the process for spans, metrics, logs, generations, and
+  scores. Buffer them. Flush on batch size or on an interval. Cap the buffer so a down Observability
+  Service cannot exhaust memory inside the Model Service. Retry the flush on its own, independent of
+  the user request. Teaching starting points, not physics: batch 100, flush every 5 seconds, cap
+  10,000. Tune them to your rate. The invariant is no extra RPC on the hot path per span. A failed
+  flush stays in the buffer. A tripped cap drops and emits a metric. It never raises into
+  `models.chat`.
+* **Custom span**: A homemade rerank, a rules engine, a third-party HTTP call, or a post-processor
+  shows up as a gap between two platform spans until the author opens one. Use the same
+  `trace_operation` the services use. Pass the current `trace_context`, a name such as
+  `custom_rerank`, and a few attributes such as `num_candidates`. A second tracing library splits
+  the tree again. If the step is actually a tool, register it with the Tools service and the execute
+  span comes free. Custom spans are for glue that is not a capability.
 
-The platform promised observability **by default**. A workflow
-author calls `platform.models.chat` and `platform.data.search` and
-does not wrap spans. If they must, the platform failed the DX test.
+## 7. Scores in one column, dollars in the next
 
-Three layers deliver the promise. A fourth exists for logic the
-platform cannot see.
+A 1.2 second reply with zero errors and a $0.03 price can still be wrong. A score is how quality
+becomes a column next to latency. Without scores, the only thing an experiment can maximize is a
+playground impression.
 
-### TracedService: automatic instrumentation
+Three sources. They differ by cost, by coverage, and by what they are blind to.
 
-Every platform service extends a base that holds an
-`ObservabilityClient` and two context managers:
+1. **Heuristic**: Code, milliseconds, deterministic. Structural checks: required JSON, length
+   bounds, whether the string contained "insurance card," "photo ID," or "records." Run it on 100%
+   of traffic. It misses tone, and it misses a paraphrase that is still correct. Use it as the
+   always-on gate. It will not tell you the answer was kind.
+2. **LLM-as-judge**: One model scores another's output against a criterion such as helpfulness,
+   tone, or flow. It is flexible, expensive, noisy, and biased, especially when the judge is the
+   same model family. Sample it. Treat the number as an instrument with error bars, not as a
+   verdict. The platform stores the score and which judge produced it. Writing the rubric is
+   separate work. Use a judge when the criterion is linguistic. Running it on every request will
+   dominate the bill.
+3. **Human**: Ground truth. Slow and expensive. Use people on a sample, on disagreements between the
+   other two, and on traces that already look bad. Humans calibrate the heuristic and the judge.
+   They will not scale as the only clock.
 
-- `trace_operation` — session get, search, validate, tool execute,
-  anything that is not an LLM completion.
-- `trace_generation` — LLM calls, recording model, tokens, cost,
-  TTFT.
+Attach each score with a name, a numeric or categorical value, a source, a target id (trace, span,
+or generation), and a timestamp. Several scores on one trace are normal: completeness 0.8, toxicity
+pass, human still pending.
 
-They start the primitive, time it, record errors, and yield a child
-context so nested calls hang off the right parent. The workflow
-developer never imports them. The Model Service implementation
-enters `trace_generation` internally.
-
-If a service skips the base class "because we were in a hurry," it
-will be the span-shaped hole in every waterfall.
-
-### Domain-specific telemetry
-
-A generation record is one call. Ops also needs **aggregates**:
-request rate, latency histograms, error ratio, cost rate, cache
-hit ratio, guardrail block rate, retrieval k distribution.
-
-That is a thin publisher: take the dataclass you already built in
-the domain, call `record_counter` / `record_histogram` with
-`PlatformMetrics` names and the standard labels. Do not make Model
-Service know about Grafana. Do not make Observability know about
-OpenAI usage objects.
-
-Guardrails belong here as first-class metrics, not only logs.
-Block rate without a trace is a vanity number; block rate *plus*
-the policy name *plus* the trace is how you catch a bad threshold.
-
-### The observability client: batching and buffering
-
-`TracedService` creates objects. Publishers create metric records.
-`ObservabilityClient` is how they **leave the process**:
-
-- buffers for spans, metrics, logs (and generations/scores)
-- flush when batch size or interval hits
-- cap the buffer so a down Observability Service cannot OOM the
-  Model Service
-- retry flush independently of user requests
-
-Numbers in the book (batch 100, flush 5s, cap 10k) are starting
-points, not physics. Tune to your QPS. The invariant is: **no extra
-RPC on the hot path per span**.
-
-If flush fails, keep the buffer. If the cap trips, drop with a
-metric. Never raise into `models.chat`.
-
-### Custom observability beyond the defaults
-
-Platform calls are covered. Application-only steps are not: a
-custom rerank, a rules engine, a third-party HTTP API, a
-post-processor. Those appear as a **gap** between two
-platform-generated spans unless the author opens a span.
-
-The SDK exposes the same `trace_operation` (and maybe a log helper)
-the services use. Pass the current `trace_context`, a name
-(`custom_rerank`), and a few attributes (`num_candidates`). Do not
-invent a second tracing library.
-
-If the custom step is actually a tool, register it with the Tools
-service and you get Execute spans for free. Custom spans are for
-glue that is not a capability.
-
-## Quality scores and cost attribution
-
-Telemetry answers what / how long / where it broke. It does not
-answer **was it good**. A 1.2s, zero-error, $0.03 answer can still
-be wrong. Scores are how quality becomes a column next to latency.
-
-### Scores: measuring response quality
-
-Three sources, three cost/quality curves:
-
-**Automated / heuristic.** Code. Milliseconds. Deterministic.
-Structural checks: required JSON, length bounds, "did the string
-contain insurance card / photo ID / records." Cheap enough to run
-on 100% of traffic. Blind to tone and to paraphrases that are
-still correct.
-
-**LLM-as-judge.** A model scores another model's output against a
-criterion. Flexible: helpfulness, tone, flow. Expensive, noisy,
-biased (especially same-family judges). Sample. Treat as
-instrumentation with error bars, not a court. The platform
-**stores the score** and which judge produced it; writing the
-rubric is separate work.
-
-**Human.** Ground truth. Slow. Pricey. Use on a sample, on
-disagreements, on traces that already look bad. Calibration fuel
-for the other two, not a replacement for them.
-
-Attach with: name, value (or categorical), source, target
-(trace/span/generation id), timestamp. Multiple scores per trace
-are normal (completeness 0.8, toxicity pass, human pending).
-
-Without scores, experimentation has nothing to maximize except
-"looks nicer in the playground."
-
-### Cost attribution and budget tracking
-
-Per-request cost is a Model Service fact. Attribution is an
-Observability query: sum dollars where labels match.
-
-Drill-down, not a flat invoice:
+Per-request dollars are a Model Service fact. Classical app cost tracks CPU and RAM and looks
+similar across requests. Token cost swings with history length, retrieved context, model choice,
+retries, and cache hits. The leaf record is how you find the one call that cost fifty cents instead
+of two. Attribution is an Observability query: sum those dollars where the labels match.
 
 1. Month by **team**.
-2. Expensive team by **workflow**.
-3. Expensive workflow by **model** (and cache hit rate).
-4. Still confused: open generations.
+2. That team's expensive workflows.
+3. That workflow by **model**, including cache hit rate.
+4. Still confused: open the generations.
 
-Budgets are thresholds on those same cuts, with projections. Alert
-before the quarter ends, not when procurement forwards the PDF.
+A workflow at $1,400 a month can be excellent. A workflow at $400 can be burning tokens on padded,
+unhelpful answers. Cost without a score cannot tell those apart. A score without cost cannot tell
+you whether a quality win is affordable. Put dollars per successful task on the same report as
+helpfulness. A quality win that doubles tokens can still be a product loss. Budgets are thresholds
+on the same cuts, with a projection, so the alert fires before the quarter ends. Once the report
+names the model, routing and cache in the Model Service are the usual levers.
 
-A quality win that doubles tokens may still be a product loss. Put
-`$ / successful task` on the same report as helpfulness, or you
-will "improve" the assistant into insolvency. Routing and cache
-in the Model Service are the usual levers once the report names
-the model.
+## 8. The Experimentation Service
 
-## The Experimentation Service
-
-Observability asks what is happening. Experimentation asks **what
-we should change**. Versioned targets, datasets, offline runs,
-online scoring, A/B, annotation queues. This is the improvement
-loop, not a second dashboard product.
-
-Insight to keep: the two services are halves of one cycle.
+Observability says what is happening. Experimentation says what to change, and whether the change
+helped. The two services are one cycle. Traffic becomes traces, traces receive scores, low scores
+become dataset cases, the same dataset compares targets offline, a candidate meets people in an A/B,
+and you promote or deprecate. Change one class of thing at a time. Two changes in one run leave you
+unable to say which one moved the number.
 
 ```
   traffic --> traces --> scores --> low-scoring cases
-                                         |
-                                         v
-                                   eval datasets
-                                         |
-                                         v
-                              offline compare targets
-                                         |
-                                         v
-                                   A/B in production
-                                         |
-                                         v
-                              promote / deprecate --> traffic
+       --> datasets --> offline compare --> A/B
+       --> promote or deprecate --> traffic
 ```
 
-Change **one** class of thing at a time or the loop cannot
-attribute.
+The teaching surface is about twenty RPCs, grouped by lifecycle. The SDK entry is
+`platform.experiments`, the same lazy client pattern as the rest of the platform SDK.
 
-### Service contract
+1. **Targets**: Register, read history, compare. A target is a change you might ship: a prompt name
+   plus version, a model config, or retrieval knobs. Prompts are one kind of target. States run
+   draft, then evaluated, then production, then deprecated. A prompt pasted into a handler has no
+   state and no history, so it cannot be promoted with numbers.
+2. **Datasets**: Create a dataset, add cases, add cases from production.
+3. **Evaluations**: Create a run, execute it (often as a stream of progress), and fetch results.
+4. **Scoring rules**: Sample live traces and attach scores in the background.
+5. **A/B experiments**: Create, assign a variant, record the outcome, stop.
+6. **Annotation queues**: Create a queue, route traces, record human labels.
 
-A teaching gRPC surface groups ~twenty RPCs into the lifecycle:
+Experimentation does not clone the objects it points at. Prompts already live in the Model Service
+registry. Retrieval config already lives with Data and with the workflow. Experimentation stores a
+pointer — name and version — plus lifecycle metadata, eval summaries, and a human description of the
+change. A copied prompt is how "v3" in the experiment diverges from "v3" at inference time. Compare
+targets by running the same dataset through each pointer. Promotion is that comparison, not a
+reaction emoji.
 
-- **Targets** — register, history, compare. A target is a *change
-  you might ship*: prompt name+version, model config, retrieval
-  knobs. Not only prompts.
-- **Datasets** — create, add cases, add-from-production.
-- **Evaluations** — create, run (often a **stream** of progress),
-  get results.
-- **Scoring rules** — online sampling on live traces.
-- **A/B experiments** — create, assign, record outcome, stop.
-- **Annotation queues** — create, route, record labels.
+* **Critics stay outside**: Call `RecordScore` and the platform will store a critic's number,
+  including which judge wrote it. The service does not write the critic, the rubric, or an in-loop
+  grounding check. A lab session that produced the score is not this database.
+* **Prices stay in Model**: Token prices and per-call usage originate in the Model Service. This
+  chapter aggregates them and joins them to quality.
+* **Deploys stay in the workflow runtime**: Observability watches a workflow. It does not deploy
+  one. A job row and a health probe are not a generation span.
+* **Prompts are user data**: A generation has a person in it. Query access is a short allow list. A
+  shared bucket of raw prompts is a different system, and a worse one.
 
-SDK: `platform.experiments`, same lazy client pattern as the rest
-of the platform SDK.
+## 9. Datasets and the three evaluation clocks
 
-### Target lifecycle and evaluation
+A target is promoted through evaluation. Three clocks, on purpose. The best teams run all three.
+Offline-only rots as soon as real phrasing drifts. Online-only ships the bug to patients. Human-only
+does not scale.
 
-Teams improve by changing something measurable: rewrite a prompt,
-swap a model or adapter, change chunk size or `k`, change a
-reranker. All of those are **targets**. They need the same states:
-draft → evaluated → production → deprecated.
+* **Dataset**: Cases. Each case has an input, an optional ideal output, tags, and extra fields such
+  as key elements or required citations. Curate the first set yourself: the happy path and the
+  obvious traps. Then call `AddFromProduction`, filtered by score, tag, or workflow, and review what
+  comes back. Production traces include junk and injection attempts. A case that becomes gospel
+  without review trains the eval on an attack. Datasets rot when policy, product names, or the right
+  answer changes. Version them and retire cases. A stale golden answer is a regression detector for
+  the wrong behavior.
+* **Offline**: Cross targets with cases, generate, score, then return an aggregate and the per-case
+  diffs. If the change can interact with retrieval, run the full stack. A harness that scores a
+  prompt against a frozen context misses "the new prompt ignores the PDF." Outputs are stochastic,
+  so repeat each case and average. A one-shot winner is a coin flip that spent CI time. Report the
+  headline, such as helpfulness +0.06, and the cases that got worse. An average hides the failure
+  patients will quote. Offline is required, and it is not enough. Patients do not talk like the
+  file.
+* **Online**: A scoring rule names the workflow, the sample rate, the scorers, and the alert
+  thresholds. A teaching mix: 10% of intake traces, a key-element check on everyone in that sample,
+  and an LLM helpfulness judge on a nested sample when the judge is too expensive to run wide.
+  Online is how you discover that the file says 0.85 and production says 0.72, because real phrasing
+  was never in the dataset. It is also how quality can page someone on a day when latency did not
+  move. Score from the completed trace, in the background. If the judge is down, serving continues.
+  You lose a metric. You do not lose the patient's reply.
+* **Annotation queue**: A queue routes traces to a reviewer who has a rubric: categorical
+  correctness, a numeric helpfulness score, and whether to add the case to a dataset. Keep the
+  routes boring and explicit. Helpfulness under 0.5 from the judge, a `guardrail_triggered` flag, or
+  a random 1% held out for calibration. The queue does three jobs: ground-truth labels, edge cases
+  the automation missed, and labeled rows back into datasets. Humans do not replace the online
+  sample. They keep two models from scoring each other into a mutual admiration society. Measure
+  whether annotators agree. A rubric that two reviewers apply differently is theater.
 
-The Experimentation Service **does not clone storage**. Prompts
-already live in the Model Service registry. Retrieval config already
-lives with Data / the workflow. Experimentation stores a *pointer*
-(name, version) plus lifecycle metadata, eval summaries, and the
-human description of the change. Duplicate storage is how v3 in
-experiments diverges from v3 at inference.
+## 10. An A/B test compares the change to people
 
-Compare targets by running the same dataset through each pointer.
-Promotion is a decision with numbers, not a Slack emoji.
+Offline compares a target to a file. An A/B compares a target to people using the product. A prompt
+can win the benchmark and lose in production.
 
-## Evaluation: datasets, offline, online, humans
+An experiment has two or more variants — a prompt, a model, a retrieval setting, or a deliberate
+combination — a traffic split, success metrics with a direction for "better," and a duration or a
+stopping rule. The workflow runs as usual. The trace is still recorded. Scores, cost, and task
+success are attributed to the variant.
 
-Evaluation is the gate on promotion. Three modes, on purpose:
-
-- **Offline** — catch regressions before traffic.
-- **Online** — catch what the dataset never imagined.
-- **Human** — keep the other two honest.
-
-Best teams use all three. Offline-only rots. Online-only ships
-bugs to patients. Human-only does not scale.
-
-### Datasets: the foundation
-
-A dataset is cases: input, optional ideal output, tags, extra
-fields (key elements, required citations). Traditional tests are
-hand-written. AI eval's best cases often **come from production**:
-the question that confused the model, the trace with helpfulness
-< 0.5, the guardrail near-miss.
-
-Start curated (the happy path and the obvious traps). Augment with
-`AddFromProduction` filtered by score, tag, or workflow. Review
-before they become gospel: production also contains junk and
-injection.
-
-Datasets rot. Policies change, products rename, last year's "ideal
-response" is wrong. Version them. Retire cases. A stale golden
-answer is a regression detector for the *wrong* behavior.
-
-### Offline evaluation: compare before deploy
-
-Pipeline: targets × cases → generate (full stack if you are testing
-RAG, not only the prompt against a frozen context) → score →
-aggregate and per-case diffs.
-
-Because outputs are stochastic, **repeat** each case and average.
-A one-shot "winner" is a coin flip with extra CI time. Include
-retrieval when the change could interact with chunks; prompt-only
-harnesses miss "the new prompt ignores the PDF."
-
-Return both a headline (helpfulness +0.06) and the cases that
-got worse. Averages hide the failure you will see on Twitter.
-
-Offline is necessary and insufficient. Patients do not talk like
-your YAML.
-
-### Online evaluation: score production
-
-Scoring rules: workflow, **sample rate**, scorers (mix heuristic
-and judge), alert thresholds. Example: 10% of intake traces, key
-elements on everyone in the sample, LLM helpfulness on a nested
-sample if cost hurts.
-
-Online is how you learn that the benchmark is 0.85 and production
-is 0.72 because real phrasing was never in the file. It is also
-how a silent quality drop pages someone when latency did not move.
-
-Keep the judge **off** the user path. Score from the completed
-trace in the background. If the judge is down, serving continues;
-you lose a metric, not a patient.
-
-### Annotation queues: calibrate with humans
-
-Queues route traces to reviewers with a **rubric** (categorical
-correctness, numeric helpfulness, "add this to the dataset?").
-Routing rules should be boring and explicit: helpfulness < 0.5
-from the judge, or `guardrail_triggered`, or random 1% for
-calibration.
-
-Three jobs: ground-truth labels, edge cases automation missed,
-labeled data back into datasets. Humans do not replace online
-scoring. They keep it from drifting into a mutual admiration
-society of models.
-
-Measure annotator agreement. A rubric nobody applies the same way
-is theater.
-
-## A/B testing infrastructure
-
-Offline compares against files. A/B compares against **people**.
-A prompt that wins the benchmark can lose in production.
-
-An experiment: two or more **variants** (prompt / model / retrieval
-/ combination), a **traffic split**, **success metrics** (and the
-direction of "better"), a duration or a stopping rule.
-
-**Assignment must be sticky.** Consistent hash of
-`(experiment_id, user_id)` so the same patient does not get warm
-v3 and terse v2 in one sitting. Hashing on `trace_id` is a UX bug.
-Hashing on "whoever hit the replica" is worse.
+* **Sticky assignment**: Hash `(experiment_id, user_id)` so the same patient stays on one variant
+  for the life of the experiment. The teaching split is control on prompt v4 at 50% and treatment on
+  prompt v5 at 50%. Hashing on `trace_id` gives one person the warm v3 and the terse v2 in a single
+  sitting. Hashing on whichever replica accepted the request is worse.
+* **One knob**: Five knobs in one experiment leave you unable to say what won. A "temporary" 5%
+  experiment that nobody stops becomes an undocumented shadow prompt.
+* **Eligibility**: Some users must stay on control: clinical, legal, or anyone else the policy
+  names. Encode that as an assignment constraint. A hallway conversation about who is excluded will
+  not survive the next on-call.
 
 ```
   request + user_id
         |
         v
   consistent_hash(experiment, user) --> bucket
-        |
-        +-- control  (prompt v4, 50%)
-        +-- treatment (prompt v5, 50%)
-        |
-        v
-  workflow runs as usual (trace still recorded)
+        +-- control     prompt v4, 50%
+        +-- treatment   prompt v5, 50%
         |
         v
-  outcomes (scores, cost, task success) attributed to variant
+  workflow runs; outcomes attach to the variant
 ```
-
-Do not A/B five knobs at once. You will not know what won. Do not
-leave a "temporary" 5% experiment forever; it becomes an
-undocumented shadow prompt.
-
-Guardrails and eligibility: some users must never leave control
-(clinical, legal). Encode that as an assignment constraint, not as
-tribal knowledge.
-
-## Putting it together
-
-Two services. Observability stores and queries the truth of
-production. Experimentation manages the lifecycle of change.
-`TracedService` plus publishers plus a buffering client make
-telemetry the default. Scores attach. Cost rolls up. Online rules
-watch a sample. Low scores become dataset cases. Offline eval
-picks a candidate. A/B confirms. You promote a **target**, not a
-vibes-based prompt paste.
-
-The workflow author's code should look like ordinary
-`platform.sessions` / `models` / `data` / `guardrails` calls with
-`trace_context` passing through, optional `assign_experiment`, and
-an outcome record at the end. No span wallpaper. Listing-shaped
-intent, infrastructure underneath.
-
-If traces are empty when you hang a whole assistant on this stack,
-that assistant is a black box with better branding.
-
-### What these services are not
-
-They are not the agent-local eval loop. Critics, grounding as a
-guardrail, Phoenix sessions, test-driven agent development: the
-platform will happily store a critic's score if you `RecordScore`.
-It will not teach you how to write the critic.
-
-They are not the Model Service. Token prices and usage originate
-there; this chapter **aggregates and joins**.
-
-They are not the Workflow Service. Observability *watches*
-workflows; it does not deploy them. Jobs and health probes live
-with workflow runtime management.
-
-They are not an excuse to log every prompt in a shared bucket
-without ACL. Generations are data with a user in them.
 
 ## Check yourself
 
-1. Sarah's new prompt keeps p95 and error rate flat, but patients
-   repeat themselves. Which traditional metric missed this, and
-   which primitives (span, generation, score) would you inspect
-   first?
-2. Why is a 200 OK from the Model Service insufficient evidence
-   that the assistant "worked"? Name two assembled inputs that can
-   make a healthy model produce a bad answer.
-3. Draw the path of one intake question through at least five
-   services. Where does `trace_id` get created, and what debugging
-   failure appears if Data omits it?
-4. Cost report vs per-request Model metrics: which question does
-   each answer, and why can a cheap workflow still be the one you
-   kill?
-5. Span vs log vs metric vs generation vs score: pick a guardrail
-   near-miss and say which object holds duration, which holds the
-   per-rule confidence, which holds the week-over-week block rate,
-   and which holds "was the final reply helpful."
-6. Why must ingest be fire-and-forget? Describe what goes wrong if
-   `RecordGeneration` sits on the user path, and what the client
-   buffer should do when Observability is down.
-7. TracedService vs a custom `trace_operation` in workflow code:
-   when is each appropriate? Give an example of a "gap" in the
-   waterfall that defaults will not fill.
-8. Automated scorer vs LLM-as-judge vs human queue: you need JSON
-   validity on 100% of traffic *and* a tone check. How do you
-   combine them without doubling the token bill?
-9. A prompt scores 0.85 offline and 0.72 online. Give two dataset
-   problems that could cause that gap, and what A/B assignment
-   rule you would insist on before calling the online number
-   causal.
-10. In one sentence each: what does Observability store that
-    Experimentation does not, and what does Experimentation manage
-    that Observability does not?
+1. Sarah's new intake prompt keeps p95 and error rate flat, while patients repeat facts already in
+   the session. Which traditional signal missed that, and which of span, generation, and score would
+   you open first?
+2. Why is HTTP 200 from the Model Service weak evidence that the assistant worked? Name two
+   assembled inputs that can make a healthy model produce a bad answer.
+3. Walk one intake question through at least five hops. Where is `trace_id` created, and what
+   failure appears in the waterfall if Data omits it?
+4. Which question does a per-request Model cost answer, and which question does the Observability
+   rollup answer? Why might the $400 workflow be the one you shut off, rather than the one at
+   $1,400?
+5. A guardrail near-miss: which object holds the duration, which holds the per-rule confidence,
+   which holds the week-over-week block rate, and which holds whether the final reply was helpful?
+6. Why does `RecordGeneration` stay off the user path? What does the client buffer do when
+   Observability is down, and what does it do when the cap trips?
+7. When is `TracedService` enough, and when do you open a custom `trace_operation`? Name a gap in
+   the waterfall that the defaults leave empty.
+8. You need JSON validity on every request and a tone check. Which source runs at 100%, which do you
+   sample, and why does the judge stay off the path that serves the patient?
+9. A prompt scores 0.85 offline and 0.72 online. Name two dataset problems that can open that gap,
+   and the assignment rule you need before you treat the online number as caused by the variant.
+10. What does Observability store that Experimentation does not copy, and what lifecycle does
+    Experimentation manage that a trace store does not? What breaks if the experiment holds its own
+    copy of prompt v3?

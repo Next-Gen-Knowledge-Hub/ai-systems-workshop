@@ -1,280 +1,156 @@
 # 3. The Model Service
 
-Companion notes for **Chapter 3** of *Designing AI Systems* (MEAP, Suhas
-Suresha and Dewang Sultania; Manning). This MEAP's printed contents page is
-**single-level** (nine chapter titles). The headings below follow the
-chapter's actual topics.
+Companion notes for **Chapter 3** of *Designing AI Systems* (Suhas Suresha and Dewang
+Sultania; Manning MEAP).
 
-Chapter 1 called the provider call ~2% of the system. This chapter is
-how that 2% becomes a **service** the other 98% can share: one contract,
-many vendors, streaming, retries, routing, cache, numbers you can join
-to a trace. Skip it and every workflow imports a different SDK, keys
-live in six `.env` files, and the invoice cannot name a feature. The
-work here is the Model Service — adapters, a stable message shape,
-org-wide policy for cost and failure.
+This chapter establishes the Model Service. The provider call is about 2% of the system.
+The other 98% shares one contract: many vendors, streaming, retries, routing, a cache, and
+numbers you can join to a trace. Afterward you can name the RPCs, the five adapter jobs,
+when a fallback is legal, and which routing filter runs first. The workflow names a job.
+The service names a provider. Without that split, twelve handlers hardcode `gpt-4o`, keys
+live in six `.env` files, a self-hosted endpoint needs a flag day, and a $2,000 invoice
+cannot name a feature.
 
-## The mental model
+## 1. The model service contract
 
-```
-  workflow:  platform.models.chat(messages, model=?, stream=?)
-                      |
-                      v
-                 ModelClient  (gRPC, x-target-service: models)
-                      |
-                      v
-  +------------------- Model Service ----------------------+
-  |  CONTRACT   Chat / ChatStream / ListModels / prompts / |
-  |             RegisterModel                              |
-  |  GATE       rate limit, response cache lookup          |
-  |  ROUTE      cost | load | features | explicit name     |
-  |  RESILIENCE retry -> fallback chain                    |
-  |  ADAPTERS   OpenAI | Anthropic | Google | vLLM / ...   |
-  |  EMIT       tokens, $ , latency, cache path, provider  |
-  +------------------------+-------------------------------+
-                           |
-                           v
-                    Observability Service
-```
-
-The one sentence to remember: **the workflow names a job; the service
-names a provider.** Hardcoding `gpt-4o` in twelve handlers is how you
-cannot fail over, cannot see spend, and cannot add a self-hosted
-endpoint without a flag day.
-
-## The model service contract
-
-Internal calls are gRPC. The **.proto is the promise.** SDK methods,
-gateway routing, Session (same message shape), Data (embeddings later)
-all hang off it. Get the verbs wrong and you will version the SDK twice
-a quarter.
-
-### Generating responses
-
-Every app reinvents "send some roles, get text and token counts." One
-team forgets usage. Another cannot pass tools.
-
-One **Chat** RPC stops that reinvention: model (or empty, for routing),
-messages, sampling/config, optional tool definitions, optional response
-format (JSON schema, etc.). Response: text (or tool calls), the model
-that *actually* ran, usage.
-
-```
-  ChatRequest                     ChatResponse
-  -----------                     ------------
-  model                           content | tool_calls
-  messages[]  role + content      model     (after fallback, this
-  config      temp, max_tokens              is not always what you
-  tools[]     name, json schema             asked for)
-  response_format                 usage     prompt / completion
-```
-
-Roles match the industry default: `system`, `user`, `assistant`,
-`tool`. That is not fashion. It is how Session stores history and how
-adapters translate. Sampling knobs as agent craft live elsewhere. Here
-they are fields on `ChatConfig` the service forwards.
-
-### Discovering available models
-
-`"gpt-4o"` in source goes stale. A 50-page PDF needs a window the
-hardcoded name does not have. A vision hop hits a text-only endpoint
-and fails in production.
-
-**ListModels** / **GetCapabilities** return name, provider, context
-window, vision, tools, JSON mode, maybe price class. Workflows that
-care query at runtime. Workflows that do not still benefit because
-**routing** (later) uses the same catalog.
-
-Discovery is a platform catalog, not a scrape of marketing pages. If a
-model is in the list, adapters and keys exist. If it is not, fail
-fast — do not send a prayer to a default.
-
-### Managing system prompts
-
-The persona paragraph is copied into four workflows. Legal edits one.
-Three drift. A prompt change requires a deploy of unrelated code.
-
-Prompts as **named, versioned documents** the Model Service stores fix
-the sprawl. Workflows pass `system_prompt_name` (and maybe a version
-pin). Chat assembly prepends the current body. Eval can swap names
-without rewriting handlers.
-
-This is not "prompt engineering." Crafting the paragraph is product
-work. **Hosting** the paragraph so it is not sprawl is this service.
-
-### Registering custom models
-
-Fine-tunes and vLLM boxes do not appear in the vendor list. Teams then
-call them with a one-off client, skipping cache, quotas, and traces.
-
-**RegisterModel** takes name, base URL, protocol (often
-OpenAI-compatible), auth ref, advertised capabilities. Same Chat RPC
-after that. Privacy, unit cost, and domain vocab are why you self-host.
-Ops cost is real. The platform still wants one on-ramp.
-
-If registration is a ticket to the platform team with a week SLA, you
-will get shadow endpoints. Make it an RPC with ACL, not a wiki.
-
-### The gRPC contract
-
-Four groups, one service:
+Internal calls are gRPC. The **.proto is the promise.** SDK methods, gateway routing, the
+Session Service (the same message shape), and Data (embeddings later) all hang off it. Get
+the verbs wrong and you will version the SDK twice a quarter.
 
 ```
   service ModelService {
-    rpc Chat(ChatRequest)       returns (ChatResponse);
-    rpc ChatStream(ChatRequest) returns (stream ChatChunk);
-
-    rpc ListModels(...)         returns (...);
-    rpc GetModelCapabilities(...) returns (...);
-
+    rpc Chat(ChatRequest)          returns (ChatResponse);
+    rpc ChatStream(ChatRequest)    returns (stream ChatChunk);
+    rpc ListModels(...)            returns (...);
+    rpc GetModelCapabilities(...)  returns (...);
     rpc RegisterPrompt / GetPrompt / ListPrompts ...
     rpc RegisterModel / ...
   }
 ```
 
-**Chat** vs **ChatStream** share the request message. That is
-deliberate: streaming is a delivery mode, not a different product. The
-gateway maps stream to SSE for browsers.
+`Chat` and `ChatStream` share `ChatRequest`. Streaming is a delivery mode of that request.
+The gateway maps the stream to SSE for browsers.
 
-### Request and response structures
+* **Chat**: One RPC for "send roles, get text and token counts," the call every app was
+  reinventing. One team forgets usage. Another cannot pass tools. The request carries
+  `model`, `messages` (`role` + `content`), `ChatConfig`, optional `tools` (name and JSON
+  schema), and optional `response_format`. The response carries `content` or `tool_calls`,
+  the model that actually ran, and `usage` (prompt / completion). Use it for every
+  generation, including the ones that only sometimes call a tool. It breaks when a handler
+  grows a private body and drops usage or tools.
+* **Empty model**: An empty `model` means the service picks, under routing config. After a
+  fallback, `ChatResponse.model` is the model that ran. Use an empty name in production when
+  combined routing is the policy. It breaks when you log only the requested name and the
+  invoice names a model that never ran.
+* **Roles**: `system`, `user`, `assistant`, `tool`. Session stores history in these roles,
+  and adapters translate them. Use this set on every message. A private role enum becomes a
+  second translation on every turn.
+* **ChatConfig**: Temperature, max tokens, `top_p` when you expose it, `seed` when a
+  provider has it. The service forwards the fields. A knob the vendor lacks dies in the
+  adapter. Use one config object in the workflow. It breaks when an unknown knob is
+  forwarded and a valid platform request 400s at the vendor.
+* **response_format**: JSON schema and the other structured-output modes are a request
+  field. Use it when the next step parses the reply. A schema that lives only as a sentence
+  in the prompt is a footnote the model can ignore.
+* **ChatMessage**: `role`, `content`, optional `tool_calls`, optional `tool_call_id` on
+  result rows. Use the tool fields so the next turn can replay the call. It breaks when the
+  call is stuffed into free-text `content` and the following generate invents a result.
+* **ToolDefinition**: Type `function`, name, description, parameters as JSON. The service
+  forwards schemas and returns calls. The workflow runtime executes the tool. Use the
+  definition when the model must choose a call. It breaks when someone treats a returned
+  `tool_calls` payload as already executed.
+* **TokenUsage**: Prompt, completion, and cache-read / cache-write when the vendor reports
+  them. Use the vendor's numbers. Inventing a tokenizer count here will disagree with the
+  bill.
+* **ListModels and GetModelCapabilities**: Name, provider, context window, vision, tools,
+  JSON mode, and maybe price class. `GetCapabilities` is the same catalog. Workflows that
+  care query at runtime. Routing uses the same list. Use it when a hardcoded `"gpt-4o"`
+  might be stale, when a 50-page PDF needs a window that name does not have, or when a
+  vision hop might hit a text-only endpoint. The list is a platform catalog: a model on it
+  has an adapter and keys. A missing name fails fast. A scrape of marketing pages, or a
+  silent default, sends the call to something the platform cannot run.
+* **Named prompts**: Prompts are named, versioned documents the service stores. Workflows
+  pass `system_prompt_name` and an optional version pin. Chat assembly prepends the current
+  body. Eval swaps names without rewriting handlers. Use this when the same persona would
+  otherwise be copied into four workflows. It breaks when legal edits one copy and the other
+  three drift, or when a wording change deploys unrelated code. Crafting the paragraph is
+  product work. Hosting the document is this service.
+* **RegisterModel**: Name, base URL, protocol (often OpenAI-compatible), auth ref, and
+  advertised capabilities. After registration the same Chat RPC applies. Use it for
+  fine-tunes and vLLM boxes that will never appear on a vendor's list. You self-host for
+  privacy, unit cost, or domain vocab. Ops cost is real. The on-ramp is an RPC with an ACL.
+  A ticket to the platform team with a week SLA produces shadow endpoints that skip cache,
+  quotas, and traces.
 
-Protobuf forces you to say what moves. Minimum honesty:
+## 2. Provider adapters
 
-- **ChatMessage** — role, content, optional `tool_calls`, optional
-  `tool_call_id` (result rows).
-- **ChatConfig** — temperature, max tokens, top_p if you expose it,
-  seed if a provider has it. Unknown knobs die in the adapter, not in
-  the workflow.
-- **ToolDefinition** — type `function`, name, description, parameters
-  JSON. The Model Service does not *execute* tools; it only forwards
-  schemas and returns calls.
-- **TokenUsage** — prompt, completion, cache-read, cache-write if the
-  vendor reports them.
-
-Optional `model` empty means "you pick" under routing config. Optional
-`response_format` is how structured output becomes a contract field
-instead of a prompt footnote.
-
-## Provider abstraction
-
-Behind the contract sits the ugly fact: vendors did not agree.
-
-### How providers differ
-
-Same job, incompatible envelopes.
+Vendors disagree on the envelope. A **canonical platform message** plus one adapter class
+per vendor keeps that table out of product code. An `if provider == "anthropic"` ladder
+starts in Sam's handler, then marketing's, then a notebook.
 
 ```
-  aspect          OpenAI              Anthropic           Gemini
-  ------          ------              ---------           ------
-  system          role in messages    top-level system    parts / roles
-  body            {role, content}     {role, content}     {role, parts}
-  text path       choices[0].message  content[0].text     candidates[0]
-  token names     prompt/completion   input/output        prompt/candidates
-  stream          SSE delta.content   text_stream ctx     chunks / parts
+  aspect        OpenAI               Anthropic            Gemini
+  system        role in messages     top-level system     parts / roles
+  body          {role, content}      {role, content}      {role, parts}
+  text path     choices[0].message   content[0].text      candidates[0]
+  token names   prompt/completion    input/output         prompt/candidates
+  stream        SSE delta.content    text_stream ctx      chunks / parts
 ```
 
-These are not bugs. They are product histories. Your workflows cannot
-absorb them. If they do, swapping a provider is a rewrite.
+The platform shape is the de facto array of `{role, content}` plus `tool_calls`. Docs,
+OpenAI-compatible servers such as vLLM, and Session storage already orbit that array. A
+fourth neutral schema would translate twice for every vendor, including the one everyone
+already speaks. Anthropic adapters extract `system`. Gemini adapters pack `parts`. OpenAI
+adapters are nearly identity. Session persists this shape, so a turn does not convert on
+the way through.
 
-A **canonical platform message** plus one adapter class per vendor
-keeps product code off this table.
-
-### The unified provider interface
-
-`if provider == "anthropic"` in Sam's handler. Then again in
-marketing's. Then a third time in a notebook.
-
-The **adapter pattern** ends that ladder. Applications see
-`ModelProvider.chat` / `chat_stream`. Each vendor class translates.
-Adding Google is a new class, not a new if-ladder in product code.
-
-```
-  ChatRequest (platform)
-        |
-        v
-  router / fallback
-        |
-        +--> OpenAIAdapter -----> OpenAI HTTP
-        +--> AnthropicAdapter --> Anthropic HTTP
-        +--> VLLMAdapter -------> OpenAI-compatible POST
-```
-
-The service may retry and fail over. The adapter should stay
-**boring**: translate, call, normalize, map errors. Policy (which
-chain, how many retries) is configuration *on the request or app*.
-Execution is platform-side. Sam does not write the loop.
-
-### OpenAI message format as platform standard
-
-You need *one* in-memory shape. Inventing a fourth "neutral" schema
-means two translations for every vendor, including the one everyone
-already speaks.
-
-Use the **de facto** array of `{role, content}` (plus tool_calls) as
-the platform lingua franca. Not because one company is owed worship.
-Because docs, OSS servers (vLLM), and Session storage already orbit it.
-Anthropic adapters *extract* `system`. Gemini adapters *pack* `parts`.
-OpenAI adapters are nearly identity.
-
-Session Service will persist this shape. If Model used a different
-one, every turn would convert. Do not.
-
-### What adapters do
+Applications see `ModelProvider.chat` and `chat_stream`. The path is `ChatRequest`, then
+router or fallback, then `OpenAIAdapter`, `AnthropicAdapter`, or `VLLMAdapter` (an
+OpenAI-compatible POST). Adding Google is a new class. The service may retry and fail over.
+The adapter stays boring: translate, call, normalize, map errors. Which chain, and how many
+retries, is configuration on the request or the app. Execution stays on the platform. Sam
+declares the chain. The service runs the loop.
 
 Five jobs. Miss one and "we have adapters" is a slogan.
 
-1. **Message translation** — system-in-array vs system parameter vs
-   parts.
-2. **Parameter mapping** — `max_tokens` vs `max_output_tokens`; drop
-   knobs a vendor lacks.
-3. **Response normalization** — find the text, usage, finish reason;
-   emit `ChatResponse`.
-4. **Error translation** — vendor exceptions → `RATE_LIMIT`,
-   `TIMEOUT`, `INVALID_REQUEST`, `CONTENT_POLICY`, `UNAVAILABLE`.
-   Retries key off *these* types, not string matching `429`.
-5. **Streaming normalization** — vendor chunk → `ChatChunk` (next
-   section).
+1. **Message translation**: System-in-array, a top-level system parameter, or parts. Use it
+   on every call, because the platform shape is one array. It breaks when an Anthropic body
+   still has `system` inside `messages` and the vendor rejects it.
+2. **Parameter mapping**: `max_tokens` versus `max_output_tokens`, and dropping knobs a
+   vendor lacks. Use it so workflows keep one `ChatConfig`. It breaks when a knob the
+   vendor lacks is forwarded and the call fails at the provider.
+3. **Response normalization**: Find the text, the usage, and the finish reason, and emit
+   `ChatResponse`. Use it so callers read one shape. It breaks when a workflow has to know
+   that Gemini text lives at `candidates[0]`.
+4. **Error translation**: Vendor exceptions become `RATE_LIMIT`, `TIMEOUT`,
+   `INVALID_REQUEST`, `CONTENT_POLICY`, or `UNAVAILABLE`. Use it so retries key off these
+   types. It breaks when policy matches the string `429` and misses the same condition
+   under another spelling. This job has to exist before a retry policy can be correct.
+5. **Streaming normalization**: A vendor chunk becomes a `ChatChunk`. Use it so the gateway
+   and the browser see one fragment. It breaks when the frontend branches on SSE
+   `delta.content`, a text stream, and parts.
 
-Auth and base URL come from config / credential refs, not from
-workflow source.
+* **Auth and base URL**: Both come from config and credential refs. Use refs so a workflow
+  image has no provider key. A key in source is how six `.env` files appear.
+* **AnthropicProvider**: `split_system` pulls system text out of the array.
+  `client.messages.create(system=..., messages=to_anthropic(rest))` sends the rest. The
+  return is `ChatResponse(content=raw.content[0].text, usage=map_tokens(raw.usage))`. Use
+  this class for the vendor whose system text is a top-level parameter.
+* **One OpenAI-compatible class**: Self-hosted endpoints share an adapter with a
+  registerable base URL. Use `RegisterModel` plus that class for a Llama box. A new class
+  per file forks the translator.
+* **Golden tests**: Messages in, vendor payloads out, and the reverse for responses. Use
+  fixtures. A suite that only hits live keys is hope, and it cannot run when the key or the
+  vendor is down.
 
-### The adapter implementation pattern
+## 3. Streaming responses
 
-One class per vendor, same interface. Anthropic as the teaching
-example (the interesting split):
-
-```
-  class AnthropicProvider:
-      def chat(self, messages, config):
-          system, rest = split_system(messages)
-          raw = client.messages.create(
-              system=system, messages=to_anthropic(rest), ...
-          )
-          return ChatResponse(content=raw.content[0].text,
-                              usage=map_tokens(raw.usage), ...)
-```
-
-OpenAI-compatible endpoints (many self-hosted) share an adapter with a
-**registerable base URL**. Do not fork a new class for every Llama
-file. Register the endpoint; reuse the translator.
-
-Tests: golden messages in, golden vendor payloads out, and the reverse
-for responses. If you only test against live keys, you do not have
-adapters; you have hope.
-
-## Streaming responses
-
-Streaming is not a pretty-print of Chat. It changes failure and UX.
-
-### The streaming architecture
-
-Users feel **time-to-first-token**, not time-to-complete. A 4s JSON
-blob feels broken. The same tokens arriving from 200ms feel alive.
-Also: you may want to abort after a bad first sentence.
-
-A pipeline with a typed fragment at each hop:
+The latency users feel is **time-to-first-token**. A 4-second JSON blob feels broken. The
+same tokens from 200 ms feel alive. You may also abort after a bad first sentence.
+Streaming changes failure and UX together.
 
 ```
-  provider SSE/iterator
+  provider SSE / iterator
        |
        v
   adapter --> ChatChunk
@@ -286,59 +162,27 @@ A pipeline with a typed fragment at each hop:
   SSE to the browser
 ```
 
-Debug latency by **layer**. If TTFT is bad, is it the vendor, the
-adapter buffer, the gateway, or the workflow waiting to assemble
-context? Traces should have spans for each. "Streaming is slow" is not
-a diagnosis.
+* **Debug by layer**: A slow stream is a span question: vendor, adapter buffer, gateway, or
+  the workflow still assembling context. Use a span on each hop. "Streaming is slow" names
+  no layer, so the fix lands on the wrong one.
+* **ChatChunk**: `token` is a text piece. Tokenizers cut oddly, so it is a fragment, and the
+  client appends it. `index` keeps order when the network reorders. `finish_reason` is
+  `stop`, `length`, `tool_calls`, `error`, or unset. `usage` often arrives only on the last
+  chunk. Use `finish_reason` as the EOF. Treating silence as the end hangs the spinner.
+* **Mid-stream death**: The vendor dies after half a paragraph is already on screen. Emit a
+  final chunk with `finish_reason=error`, keep the partial text, and show a recovery
+  affordance. Use this when bytes have already reached the client. A clean `ChatResponse`
+  error cannot replace text the user has read. **Fallbacks apply before the first byte.** A
+  hop to another model mid-sentence changes voice. Restarting the whole answer is a product
+  choice: clear the UI and say "retrying." Streaming buys TTFT and spends recoverability.
+  Write that down. A retry after a dropped stream is a new request. The bytes do not splice.
 
-### The ChatChunk message
+## 4. Retries
 
-OpenAI `delta.content`, Anthropic events, local servers with third
-spellings. Frontends should not care.
-
-One fragment:
-
-```
-  ChatChunk
-    token          text piece (not a "word"; tokenizers cut oddly)
-    index          order, in case the network lies
-    finish_reason  stop | length | tool_calls | error | unset
-    usage          often only on the last chunk
-```
-
-The client appends `token`. It treats `finish_reason` as the only
-honest EOF. Do not infer EOF from silence — that is how you hang a
-spinner.
-
-### Streaming and error handling
-
-Mid-stream, the vendor dies. Half a paragraph is already on screen. You
-cannot replace it with a clean `ChatResponse` error. Falling over to
-another model mid-sentence changes voice in a way users read as
-possession.
-
-Emit a final chunk with `finish_reason=error`. Keep the partial text;
-show a recovery affordance. **Fallbacks apply before the first byte**,
-not in the middle, unless you have a product reason to restart the
-whole answer (clear the UI, say "retrying"). That is a trade: streaming
-buys TTFT and spends recoverability. Document it.
-
-Retries of the *same* stream after a drop are a new request. Do not
-pretend they splice.
-
-## Resilience: fallbacks and retries
-
-Outages, 429s, blips. The question is not whether. It is **whose
-loop**.
-
-Every workflow's `try/except` with `sleep(1)` grows different codes.
-Some retry `INVALID_REQUEST` forever. Some never retry 429.
-
-Sam **declares** policy. The Model Service **runs** it. Retries for
-transient types; fallbacks to another adapter when a provider is
-exhausted; fail-fast types that must not hop.
-
-### Retry configuration
+Outages, 429s, and blips will happen. Whose loop runs is the design choice. Every
+workflow's `try/except` with `sleep(1)` grows a private policy. Some retry
+`INVALID_REQUEST` forever. Some never retry a 429. Sam declares the policy. The Model
+Service runs it, for transient types only.
 
 ```
   RetryConfig
@@ -346,332 +190,242 @@ exhausted; fail-fast types that must not hop.
     initial_delay
     exponential_backoff
     max_delay
-    retry_on   [RATE_LIMIT, TIMEOUT, UNAVAILABLE, ...]
+    retry_on    [RATE_LIMIT, TIMEOUT, UNAVAILABLE, ...]
 ```
 
-Retry 429 and timeouts. Do not retry malformed JSON or a policy
-refusal — another vendor will refuse too, and you burn budget. Cap
-delay so a dying dependency cannot hold a replica forever. The
-workflow still has a deadline from the gateway and SDK layer.
+* **retry_on**: `RATE_LIMIT`, `TIMEOUT`, and `UNAVAILABLE`. A 429 and a timeout are
+  transient. Use the typed errors from the adapter. It breaks when the list is "any
+  exception," because a malformed body then retries until `max_retries` is spent.
+* **Fail-fast types**: Malformed JSON (`INVALID_REQUEST`) and a content-policy refusal
+  (`CONTENT_POLICY`) stay off `retry_on`. The same payload fails again, and the extra
+  attempts burn budget. Use these as terminal for the retry loop.
+* **Backoff and the cap**: `initial_delay` grows by `exponential_backoff`, up to `max_delay`,
+  for at most `max_retries`. The cap stops a dying dependency from holding a replica
+  forever. The workflow still carries a deadline from the gateway and the SDK. A retry loop
+  with no cap, and no outer deadline, pins a worker to a vendor that is not coming back.
 
-### Fallback configuration
+## 5. Fallbacks
+
+A fallback runs when a provider is exhausted. It calls the next adapter. A retry hits the
+same provider again. The two configs compose: each provider in the chain gets its own
+retry loop, and some errors skip the rest of the chain.
 
 ```
   FallbackConfig
     enabled
-    providers[]     ordered alternatives
-    retry_config    applied *per* provider
-    fail_on[]       skip the rest of the chain
+    providers[]      ordered alternatives
+    retry_config     applied per provider
+    fail_on[]        skip the rest of the chain
 ```
 
-Order is preference. Log **which** provider answered. Silent fallback
-is how quality dies while dashboards stay green. `fail_on` should
-include invalid request and (usually) content policy — hopping is not
-a jailbreak tool.
+* **Order and the log**: `providers[]` is preference order. `retry_config` applies per
+  provider. Log which provider answered. Use the log whenever `enabled` is true. A silent
+  fallback keeps dashboards green while quality dies.
+* **fail_on**: Include `INVALID_REQUEST` and, usually, `CONTENT_POLICY`. Those types skip
+  the rest of the chain. Another vendor refuses the same payload, and the hop burns budget.
+  A fallback is the wrong tool for shopping a refusal across vendors.
+* **User-facing chat**: Availability first. Short retries, then a second cloud, then a local
+  model, so a vendor holiday leaves the product up. The local model is worse. Score
+  that hop so you know how often you paid the tax. Use this when being up matters more than
+  being identical. It breaks when you never score the local answers and the product quietly
+  gets dumber.
+* **Batch analytics**: Correctness first. Longer retries on one provider, and `enabled`
+  false. Fail the item, dead-letter it, inspect it. Use this when a wrong answer is more
+  expensive than a delay. A quick hop hides a poison payload or a key that is wrong.
+* **The SLO sentence**: Write the policy next to the sentence you mean: "we would rather be
+  down than quietly dumber," or the reverse. Copying either blob without that sentence is
+  how the wrong chain ships.
 
-### Configuration examples
+## 6. Routing
 
-**User-facing chat (availability first).** Short retries, then a second
-cloud, then a local model so a vendor holiday is not an outage. Accept
-that the local model is worse; **score** it so you know how often you
-paid that tax.
-
-**Batch analytics (correctness first).** Longer retries on one
-provider, fallbacks **off**. Fail the item, dead-letter, inspect.
-Quick hops here hide a poison payload or a key that is wrong.
-
-Do not copy either blob blindly. Write the policy next to the SLO:
-"we would rather be down than quietly dumber" vs the reverse.
-
-## Routing strategies
-
-Fallbacks are after failure. **Routing** is before the first attempt,
-when `model` is empty or when you asked the service to choose.
-
-Twelve workflows each implement "cheap unless hard." Spend and load
-counters are local and wrong.
-
-Strategies live in the Model Service, where **budget and in-flight
-counts** actually live. Explicit `model=` still bypasses routing. That
-is the escape hatch for eval pins.
-
-### Routing configuration
+Fallbacks run after failure. **Routing** runs before the first attempt, when `model` is
+empty or when the service is asked to choose. Twelve workflows each implementing "cheap
+unless hard" keep spend and in-flight counts local, and wrong. Strategies live where the
+budget and the in-flight counts live. An explicit `model=` bypasses routing. That escape
+hatch is how eval pins a name.
 
 ```
-  RoutingConfig
-    strategy          cost | load | feature | combined
-    default_provider  when the tree is indifferent
-    cost_config / load_config / feature_config
-```
-
-Application supplies the config; platform executes. If every request
-names a model, routing never runs — and you will still want it the
-month finance asks why.
-
-### Cost-aware routing
-
-Frontier model for "what is your return window?" burns the month. Then
-the hard cases have no budget.
-
-Track spend against a window. Near the cap, prefer local / cheap.
-Otherwise branch on **task complexity** (heuristic, classifier, or
-explicit tag from the workflow).
-
-```
-  spend ~ limit? --yes--> cheapest (often local)
-        |
-        no
-        v
-  task simple? --yes--> small API model
-        |
-        no --> frontier
-```
-
-Complexity guesses mis-route. That is why eval exists. Cost routing
-without scores is how you silently make the assistant worse at
-month-end.
-
-### Load-based routing
-
-All traffic on one vendor until 429, *then* fallback. You discover
-capacity as an incident.
-
-Track in-flight per provider. Send the next call to the least loaded.
-Increment before send, decrement on any completion (including failure)
-or you leak counts.
-
-Works when latency is comparable and you hold limits on several
-accounts. Poor when one "provider" is a slow local GPU and the other
-is a fast API — least-outstanding-requests will fill the slow one. Pair
-with features or a latency EWMA if that is your estate.
-
-### Feature-based routing
-
-A PDF-with-figures hop hits a text-only model. You get a confusing
-error or a hallucinated "I can't see."
-
-Capability matrix from discovery. Required features (vision, tools,
-JSON, window ≥ N) **intersect**. Empty intersection fails fast. No
-"try it anyway."
-
-```
-  need vision  --> {gpt-4o, claude, ...}
-  need 100k    --> {claude, gpt-4o, ...}
-  intersection --> route inside that set
-```
-
-### Combining patterns
-
-Real apps stack them:
-
-1. **Features** (hard filter).
-2. **Cost** (soft preference on the remainder).
-3. **Load** (tie-break).
-
-```
-  capable = feature_filter(request)
+  capable   = feature_filter(request)
   preferred = cost_rank(capable, spend, complexity)
-  pick least_loaded(preferred) or default
+  pick least_loaded(preferred) or default_provider
 ```
 
-Sam's assistant can then `chat(messages)` without naming a vendor.
-Image turns still land on vision. Month-end still shifts easy FAQ to
-local. Do not invert the order: cost must not override "this request
-needs eyes."
+* **RoutingConfig**: `strategy` is `cost`, `load`, `feature`, or `combined`.
+  `default_provider` is the pick when the tree is indifferent. `cost_config`,
+  `load_config`, and `feature_config` hold the knobs. The application supplies the config.
+  The platform executes it. Use `combined` when Sam should call `chat(messages)` without
+  naming a vendor. If every request names a model, routing never runs, and the month finance
+  asks why you still need the counters.
+* **Cost-aware**: Track spend against a window. Near the cap, prefer the cheapest model,
+  often local. Under the cap, branch on **task complexity**: a heuristic, a classifier, or
+  an explicit tag from the workflow. A simple task goes to a small API model. A hard task
+  goes to the frontier. Use it so "what is your return window?" does not burn the month and
+  leave the hard cases with no budget. Complexity guesses mis-route. Eval exists for that.
+  Cost routing without scores makes the assistant worse at month-end while the bill looks
+  controlled.
+* **Load-based**: Track in-flight requests per provider and send the next call to the least
+  loaded. Increment before send. Decrement on any completion, including failure, or the
+  count leaks. Use it when latencies are comparable and you hold limits on several accounts.
+  Sending everything to one vendor until a 429, then falling back, discovers capacity as an
+  incident. It fails when one provider is a slow local GPU and the other is a fast API:
+  least-outstanding-requests fills the slow one. Pair load with features, or with a latency
+  EWMA, when that is the estate.
+* **Feature-based**: Required features (vision, tools, JSON, window ≥ N) **intersect** the
+  capability matrix from discovery. Vision might leave `{gpt-4o, claude, ...}`. A 100k
+  window might leave `{claude, gpt-4o, ...}`. Route inside the intersection. An empty
+  intersection fails fast. Use it for a PDF-with-figures hop. A text-only model returns a
+  confusing error or a hallucinated "I can't see." There is no "try it anyway."
+* **Combined order**: Features are the hard filter. Cost is a soft preference on what
+  remains. Load is the tie-break. Image turns still land on a vision model. Month-end still
+  shifts an easy FAQ to local. Cost first sends a figure-heavy PDF to a cheap text model
+  that cannot see the page. Explicit `model=` still skips the whole tree.
 
-## Rate limiting
+## 7. Rate limiting
 
-A loop, a load test aimed at prod, a bot. Provider quotas protect
-*them*. They may happily take enough traffic to ruin *you*. Worse: 429
-on OpenAI trips fallbacks, so the runaway spends Anthropic next.
-Resilience becomes a multiplier.
+A loop, a load test aimed at production, or a bot can spend more than you can afford.
+Provider quotas protect the provider. They can still accept enough traffic to ruin you. A
+429 from OpenAI then trips fallbacks, so the runaway spends Anthropic next. Resilience
+becomes a multiplier.
 
-**Platform-side** limits before any adapter: per key, per workflow,
-per tenant, per model class. Fail with a typed `RATE_LIMIT` the UX can
-explain. Do not wait for the vendor.
+* **Platform limit, before any adapter**: Per key, per workflow, per tenant, and per model
+  class. Fail with a typed `RATE_LIMIT` the UX can explain. Use it in front of the adapter
+  call, on the same path as the response-cache lookup: both are the gate. Waiting for the
+  vendor's 429 is how the fallback multiplier starts.
+* **Org policy**: A limit Sam can `sleep` past is only a delay. Align the numbers with the
+  gateway's external quotas so the two layers double-count only when you mean them to. The
+  gateway protects ingress. The Model Service protects **token spend**. Two accidental
+  counters reject traffic the budget still allowed.
 
-This is org policy, not an app hobby. If Sam can `sleep` around it, it
-is not a limit. Align with the gateway's external quotas so you do not
-double-count without meaning to — gateway protects ingress; Model
-Service protects **token spend**.
+## 8. Caching
 
-## Caching for cost and performance
-
-Two different caches. People say "we cache" and mean one, then wonder
-why the bill moved 4%.
-
-### Two levels of caching
+Two caches. A team that says "we cache" and means one of them will wonder why the bill
+moved 4%.
 
 ```
   request in
      |
      v
-  RESPONSE CACHE  (platform)  exact messages+config hit?
-     | yes --> return, $0, sub-ms
-     no
+  RESPONSE CACHE (platform)    exact messages + config?
+     | hit --> return, $0, sub-ms
+     miss
      v
-  adapter call, with PROMPT/PREFIX CACHE (vendor)
+  adapter call, with PROMPT / PREFIX CACHE (vendor)
      |
      v
-  store in response cache (if enabled)
+  store in the response cache when it is enabled
 ```
 
-**Response cache.** Identical inputs → identical output. FAQ bots love
-it. Creative sampling (`temperature` high) should **disable** it or
-you will repeat a joke. Keys must not accidentally include raw PII you
-would not store; if messages contain secrets, cache is a privacy
-system.
+* **Response cache**: Identical inputs return the stored output and skip the HTTP call. FAQ
+  bots are the fit. The key is `hash(messages, config)`, so a different temperature is a
+  different key. `CacheConfig` is `enabled`, `ttl_seconds`, and `max_size`, with
+  `ResponseCache.get(messages, config)` and `set(messages, config, response)`, LRU plus TTL.
+  Use it for low-temperature answers you are willing to repeat. High `temperature` should
+  turn it off, or the bot repeats a joke. A key that contains raw PII you would not
+  otherwise store makes the cache a privacy system. Secrets in the messages become secrets
+  in the store.
+* **Prompt / prefix cache**: The vendor reuses a long system prompt or a document prefix.
+  You still pay for a call. The prefix tokens are cheaper. Anthropic wants markers. OpenAI
+  may do this automatically. vLLM prefix-caches by default. Adapters hide the flags. The
+  workflow can still opt in or out. Those options pass through the adapter, on the vendor
+  call. They are a different store from `ResponseCache`. Use the prefix cache for a stable
+  preamble in front of a unique user turn. It breaks when you expect it to skip the call, or
+  when a marker the vendor requires is never set, and you pay list price for a prefix you
+  thought was discounted.
+* **What you measure**: Hit rate, saved tokens, and saved dollars, split by response cache
+  versus prefix cache. A cache that is "on" at a 5% hit rate usually has a TTL that is too
+  short, queries that are too unique, or a temperature that randomizes the key. Cost
+  accounting: a response hit is 0, a prefix hit is a discount, a miss is list price. If
+  Observability never sees the cache path, finance still has a mystery.
 
-**Prompt / prefix cache.** Vendor reuses the long system prompt or
-document prefix. You still pay a call, cheaper on the prefix tokens.
-Anthropic wants markers; OpenAI may automatic; vLLM prefix-caches by
-default. Adapters hide the flags; the workflow can still opt in/out.
+## 9. Cost and metrics
 
-### The cache interface
+The failure this section exists to stop is a $2,000 invoice with no feature name. Every
+call emits tokens, dollars, latency, the cache path, and the provider.
 
-```
-  CacheConfig: enabled, ttl_seconds, max_size
-  ResponseCache.get(messages, config) -> ChatResponse | None
-  ResponseCache.set(messages, config, response)
-```
+* **Usage**: Prompt tokens, completion tokens, and cache-read / cache-write when the vendor
+  reports them. Use the adapter's normalized `TokenUsage`. A missing usage field means the
+  bill cannot be joined to the call.
+* **Identity**: The requested model, and the **actual** model and provider after a fallback.
+  Use both. Logging only the request hides which cheap model answered.
+* **Time**: TTFT, total duration, and adapter wait versus vendor wait when you can split
+  them. Use the split when "streaming is slow" has to name a layer. One number cannot.
+* **Disposition**: Ok, retry count, fallback hop, rate-limited, cache-hit kind, and error
+  type. Use the hop and the error type together. A green success rate during a fallback
+  storm means the primary is returning 429. Load-balance that primary. Retries during the
+  storm multiply the same failure.
+* **Attribution**: Workflow id, tenant, and maybe a user hash. Use these on every call.
+  Without them you have a sum, and the sum is a story that only says "AI."
+* **Generation span**: Quality scores live with experimentation. This service emits the span
+  those scores hang on. Use the span id so a bad score can find the model, the prompt name,
+  and the token counts. A score with no span is a number you cannot debug.
+* **Producer**: Publish each call to the Observability Service. Aggregate by provider,
+  model, workflow, tenant, and time. A sidecar CSV nobody joins teaches nothing. A 40% spend
+  jump should read "the new summarizer, frontier model, mid-month." Dashboards and alerts
+  live in Observability. The Model Service stays a producer. If it is also the only UI, you
+  rebuild experimentation in the wrong service.
+* **What the numbers are for**: Cut cost by naming the workflow, the model, and what should
+  be a small model or a cache hit. Cut latency from TTFT regressions and from fallback
+  storms. Catch anomalies: error spikes, and a sudden rise in tokens per request from prompt
+  bloat or runaway tools. A monthly review on the same dashboards finance sees is how
+  routing is allowed to change. Numbers nobody may act on are a museum.
 
-Key = hash(messages, config). Different temperature → different key.
-LRU + TTL. Prompt-cache options pass through the adapter, not through
-this store.
+## 10. SDK integration
 
-### Monitoring cache effectiveness
-
-Cache "on" with 5% hit rate. TTL too short, queries too unique, or
-temperature randomizing the key.
-
-Track hit rate, saved tokens, saved dollars, split by response-cache
-vs prefix-cache. Cost accounting: hit = 0; prefix = discount; miss =
-list price. If Observability does not know the path, finance will still
-see a mystery.
-
-## Observability: cost tracking and metrics
-
-Chapter 1's $2,000 invoice with no feature name is this section's
-villain.
-
-### What the model service tracks
-
-Every request, at least:
-
-- **Usage** — prompt, completion, cache-read/write tokens.
-- **Identity** — requested model, **actual** model/provider (fallback).
-- **Time** — TTFT, total duration, adapter wait vs vendor wait if you
-  can split them.
-- **Disposition** — ok, retry count, fallback hop, rate-limited, cache
-  hit kind, error type.
-- **Attribution** — workflow id, tenant, maybe user hash. Without this,
-  you have a sum, not a story.
-
-Quality scores live with experimentation. This service must emit the
-**generation span** those scores hang on.
-
-### Feeding the observability service
-
-Metrics in a sidecar CSV nobody joins teach nothing.
-
-Publish per call into the Observability Service. Aggregate by
-provider, model, workflow, tenant, time. When spend jumps 40%, you
-should be able to say "the new summarizer, frontier model, mid-month"
-— not "AI."
-
-Dashboards and alerts live there. Model Service stays a **producer**.
-If it also becomes the only UI, you will rebuild experimentation
-badly.
-
-### Enabling informed decisions
-
-What the numbers are *for*:
-
-- **Cut cost** — which workflows, which models, which should be
-  small-model or cached.
-- **Cut latency** — TTFT regressions, fallback storms that mean the
-  primary is 429ing (load-balance, do not only retry).
-- **Catch anomalies** — error spikes, sudden tokens-per-request
-  (prompt bloat, runaway tools).
-
-If nobody is allowed to change routing after looking, you built a
-museum. Tie a monthly review to the same dashboards finance sees.
-
-## Integrating with the SDK
-
-Sam still types `platform.models.chat`. The SDK skeleton is already
-there; this is the flesh.
-
-### The ModelClient
-
-Lazy client, `service_name="models"`, stub from generated proto.
-Three jobs: channel, protobuf in, Python out.
+Sam still types `platform.models.chat`. This is the flesh on the SDK skeleton. The workflow
+image can omit every vendor SDK. Keys stay on the Model Service. That is half the security
+win.
 
 ```
-  platform.models  -->  ModelClient(BaseClient)
-                            |
-                            +-- Chat / ChatStream / ListModels / ...
-```
-
-No vendor SDK in the workflow image *required*. Keys stay on the Model
-Service. That is half the security win.
-
-### Method implementation pattern
-
-`chat(...)` converts `ChatMessage` lists and configs to protobuf,
-attaches routing metadata, calls `stub.Chat`, maps `ChatResponse`.
-Pass through `fallback_config` and `routing_config` so policy is
-per-call when it must be, defaulted from app config when it need not
-be.
-
-Do not hide usage. If the SDK drops `usage`, Observability never sees
-what the handler already threw away — and Sam cannot log cost even in
-a pinch.
-
-### Streaming support
-
-`chat_stream` returns an iterator. Pull gRPC chunks, yield
-`ChatChunk`. The workflow `yield`s to the gateway. Do not buffer the
-whole stream in the client "to make it easier." That destroys TTFT.
-
-### The complete picture
-
-```
-  1. GenAIPlatform()           # no sockets yet
-  2. platform.models           # channel to gateway
-  3. chat(messages, model=...)
-  4. GW routes to Model Service
-  5. cache? rate limit? route? retry?
+  1. GenAIPlatform()             # no sockets yet
+  2. platform.models             # channel to the gateway
+  3. chat(messages, model=...)   # or chat_stream
+  4. gateway routes to Model Service (x-target-service: models)
+  5. response cache?  rate limit?  route?  retry / fallback?
   6. adapter --> vendor
-  7. ChatResponse back; metrics emitted
-  8. workflow uses .content
+  7. ChatResponse back; metrics emitted (tokens, $, latency, cache path, provider)
+  8. workflow reads .content and .usage
 ```
 
-Pin a model in eval. Leave it empty in prod if combined routing is the
-policy. Never skip the service "because the SDK can call OpenAI
-directly" — that path is how chapter 1 returns.
+* **ModelClient**: A lazy `BaseClient` with `service_name="models"` and a stub from the
+  generated proto. Three jobs: open the channel, protobuf in, Python out. Methods cover
+  Chat, ChatStream, ListModels, GetModelCapabilities, and the prompt and register calls.
+  Use the same lazy channel as the other platform clients. A client that constructs a
+  vendor SDK inside the workflow puts the key back in the image.
+* **chat**: Convert `ChatMessage` lists and configs to protobuf, attach routing metadata,
+  call `stub.Chat`, and map `ChatResponse`. Pass `fallback_config` and `routing_config`
+  through, so policy can be per call, and default them from app config when the call does
+  not care. Keep `usage` on the returned object. If the SDK drops it, Observability never
+  sees the tokens, and Sam cannot log cost on the handler either.
+* **chat_stream**: Returns an iterator. Pull gRPC chunks and yield `ChatChunk`. The workflow
+  yields those to the gateway. Use the iterator when the user is watching the reply.
+  Buffering the whole stream inside the client destroys TTFT. The 200 ms first token
+  becomes the 4-second blob from section 3.
+* **When to pin**: Pin `model` in eval. Leave it empty in production when combined routing
+  is the policy. The direct-to-OpenAI path on the SDK skips the service: no shared cache, no
+  org rate limit, no fallback, and no workflow id on the invoice. That path is how the $2,000
+  line comes back with no feature name.
 
 ## Check yourself
 
-1. Why is `Chat` vs `ChatStream` two RPCs that share `ChatRequest`?
-   What goes wrong if streaming is a boolean the JSON API half-
-   implements?
-2. A system prompt is copied in four workflows. Name two incidents
-   prompt *hosting* prevents that prompt *wording* alone cannot.
-3. Draw OpenAI vs Anthropic vs Gemini for *system* placement. Why is
-   the platform shape OpenAI-like, and what does the Anthropic adapter
-   have to do on every call?
-4. List the five adapter jobs. Which one must exist before retry
-   policy can be correct?
-5. Mid-stream vendor death: what does the client see, and why is
-   failing over to Claude *mid-sentence* usually the wrong default?
-6. User-facing vs batch: sketch two `FallbackConfig`s. What metric
-   tells you the user-facing chain is lying about quality?
-7. Combined routing: order feature, cost, load. Give a request that
-   breaks if you put cost first.
-8. Why can provider 429 + fallbacks *increase* spend during a runaway
-   loop? Where does a platform rate limit sit relative to adapters?
-9. Response cache vs prefix cache: which skip the HTTP call, which
-   only cheapen it, and when must you disable the first?
-10. An invoice jumps. Which dimensions must Model Service emit so you
-    can name a workflow, not "AI"?
+1. Why do `Chat` and `ChatStream` share one `ChatRequest`? What breaks if streaming is a
+   boolean a JSON API only half-implements?
+2. Legal edits the persona in one of four copied workflows. Name two incidents that hosting
+   a named, versioned prompt prevents, and that a better paragraph still cannot.
+3. Where does system text sit for OpenAI, Anthropic, and Gemini? Why is the platform
+   message the `{role, content}` array plus `tool_calls`, and what does the Anthropic
+   adapter extract on every call?
+4. List the five adapter jobs. Which one has to land before retries can key off
+   `RATE_LIMIT` instead of the string `429`?
+5. The vendor dies after half a paragraph is on screen. What `finish_reason` does the
+   client see, what happens to the partial text, and why is a mid-sentence hop to another
+   model the wrong default?
+6. Sketch one user-facing `FallbackConfig` and one batch `FallbackConfig`. What do you
+   score so the availability chain cannot lie about quality?
+7. Combined routing filters by features, then cost, then load. Name a request that breaks
+   if cost runs first, and say where that request lands.
+8. A runaway loop gets an OpenAI 429 while fallbacks are on. Why can the bill rise, and
+   where does a platform rate limit sit relative to the adapters?
+9. Which cache returns at $0 in sub-millisecond time, and which still makes the HTTP call?
+   When must the first be disabled, and what does a 5% hit rate usually mean?
+10. Spend jumps 40%, or the invoice is $2,000 with no feature name. Which fields must each
+    call emit so the line can read "the new summarizer, frontier model, mid-month"?
