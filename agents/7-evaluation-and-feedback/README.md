@@ -1,16 +1,43 @@
-# Building robust agents with evaluation and feedback
+### **Chapter 7 Summary: Building Robust Agents with Evaluation and Feedback**
 
-Evaluation and feedback are how robustness becomes something you can measure and then improve. They will not rescue a muddled design. They show you how the system actually behaves, and they give you a loop for changing it. Put that loop on with the first prompt. Waiting for production is how a user becomes your test suite.
+Chapter 7 of *AI Agents in Action, Second Edition* shows how to make agent robustness measurable through evaluation and feedback loops, test-driven development practices, specialized evaluator agents, and observability platforms such as Phoenix.
 
-Three checks cover three kinds of correctness. A deterministic test catches a schema, a tool choice, or a known answer. Another model judges language where quality is a matter of degree. A person catches tone, policy, and the edge the other two miss. Around those sit red-team probes for phrases that break the system, benchmarks for whether the goal was met, and ratings from users that need cleaning before they steer a change.
+---
 
-Feedback takes two roads. Inside the run, a critic or a grounding check can change the next action. Outside the run, results land in a store for regressions, dashboards, and a later signal you can learn from.
+#### **1. Introducing Evaluation and Feedback**
+* **Purpose of evaluation**: Evaluation does not fix poor architecture by itself; it reveals **actual runtime behavior** and supplies a mechanism for iterative improvement tied to the Learn step in sense-plan-act-learn.
+* **Feedback paths**: Results may flow **back into the agent** through in-loop critics and grounding checks, or into an **evaluation database** for regression detection, analysis, and training signals.
+* **Three evaluation forms**: **Deterministic tests** suit exact correctness; **LLM and agent evaluators** handle graded language quality; **human reviewers** cover policy, tone, and judgment cases the automation misses.
+* **Red team and benchmarks**: Red-team probes test whether specific terms or patterns break the system; **benchmark suites** measure goal attainment across workflows or individual agents.
+* **Human feedback hygiene**: Production systems rely on user ratings and comments, but raw feedback is noisy and needs **aggregation, outlier detection, stratified sampling**, and review of flagged outputs.
+* **Multi-agent governance**: Evaluator collusion is a real risk when judges share the same model and blind spots; mitigations include **different models or personas**, authority hierarchy, auditable agent-to-agent logs, escalation rules, and least-privilege authority per agent.
 
-- **Test-driven agent development.** Write the benchmark first, and include an answer you already know is wrong. Expect a miss, and run the case more than once, because one sample lies. Then change the smallest thing that could pass: a word, a clause, a sentence, a section, a tool, and the model only after the cheaper edits fail. Watch the path as well as the ending. A tidy final sentence reached by a messy tool path still fails when the path was part of the test.
-- **Grounding as a guardrail.** Hand a second agent the question, the answer, and the same retrieved context. It returns a typed verdict, supported or not, plus the reason. On a miss, retry with that feedback or block with a fixed reply, and cap the retries. After the ceiling, fail softly for a user and fail loudly for a pipeline. Grounding also covers tool results, memory, and citations, anywhere there is a source to defer to.
-- **Critic and rubric agents.** Open-ended work, an image, a report, a plan, needs a purpose, criteria, a scale, and a description of each level. A critic scores against that rubric and sends the misses back until a pass or the attempt limit. Check the rubric on human judgment, or it will be steady and wrong. Give the judge a different model than the worker. Shared weights tend to bless the same mistake, and a green board then becomes false confidence.
-- **Phoenix for traces, experiments, and annotations.** Arize Phoenix sits on OpenTelemetry and collects the spans the Agents SDK already emits: projects, sessions, latency, tokens, and cost. Attach metadata so a cohort can be filtered. Build a dataset from spans, run evaluators as experiments, and record human annotations on the spans. Feed those labels back into prompts, tools, and policy.
+---
 
-Because the sampler varies, track stability, latency, and token use alongside accuracy. When two benchmarks fight, choose on purpose: accept a partial target, split the job across specialists, or rewrite the instructions from a blank page.
+#### **2. Test-Driven Agent Development**
+* **TDAD mindset**: **Test-driven agent development** defines what good looks like as rubrics and benchmarks before building prompts and tools, mirroring TDD’s discipline while accepting that teams sometimes write tests after an MVP.
+* **Holistic tests**: Beyond final answers, tests can assert **tool choice, reasoning steps, grounding, step count, latency, cost**, and behavior when something fails.
+* **Refactor ladder**: From each failure, apply the **smallest change first**—word, clause, sentence, section, tool, then model—to keep prompts lean and avoid contradictory multipage system prompts.
+* **Stochastic reruns**: Unlike classic unit tests, LLM variability means benchmarks should run **multiple times** before a pass is trusted; automation can store evaluation runs offline.
+* **Conflicting benchmarks**: When tests contradict each other, explicitly decide whether **partial pass rates**, specialist agents with routing, or a full prompt rewrite from benchmarks is the right tradeoff.
+* **Agent evaluator upgrade**: Natural-language outputs need judges beyond string equality; typed **pass or fail plus feedback** catches formatting false negatives and scales to richer answers.
 
-Log the judges with the workers. An evaluator that passes a bad answer is a silent bug. Leave an agent unpromoted until this loop is actually running.
+---
+
+#### **3. Grounding, Critic, and Rubric Agents**
+* **Grounding agent**: Verifies that claims in an answer are **supported by retrieved or authoritative context**; on failure it can regenerate, block with a static response, or surface grounding metadata in the final payload.
+* **Guardrails**: Output guardrails trip on ungrounded answers, enabling **retry with feedback** or safe failure paths instead of silent hallucination in RAG flows.
+* **Critic agents**: Score generated content against criteria, **block failing output**, and enforce a **retry ceiling** with fallbacks such as human escalation, best-of-failed with confidence flags, or explicit errors.
+* **Rubrics**: Structured criteria, scales, and level descriptions turn subjective quality into **measurable dimensions**; rubrics themselves must be validated against human judgment.
+* **Structured vs open output**: Classification and extraction can use **accuracy-style metrics**; summaries and creative work need rubrics, LLM judges, or human review.
+* **Image critic loop**: A generation agent and rubric-driven critic can iterate until a **minimum score** or attempt limit, with threshold calibration tied to false pass versus false fail costs.
+
+---
+
+#### **4. Phoenix for Traces, Experiments, and Annotations**
+* **Why Phoenix**: As systems mature, trace-level observability becomes necessary for debugging complex agent flows; **Arize Phoenix** adds projects, sessions, metrics, costs, experiments, and evaluators atop OpenTelemetry.
+* **Connection pattern**: Replace default trace processors, set the **collector endpoint**, register a project, and wrap runs in named traces so agent workflows appear in the dashboard.
+* **Metadata and sessions**: Attach **session identifiers and metadata** such as run id, environment, and model so traces can be filtered and cohorts compared in the UI.
+* **Experiments**: Select spans into **datasets**, then run dashboard-driven experiments with evaluators over LLM responses, tool calls, or custom spans—the outer loop of TDAD on production-like data.
+* **Annotations**: Structured labels on spans turn informal review into **queryable signals** that can seed regression sets and correlate quality with latency, cost, and token usage.
+* **Production rule**: Agents should not ship without active **evaluation, grounding or guardrails, critics, tracing, and monitored KPIs** working together.

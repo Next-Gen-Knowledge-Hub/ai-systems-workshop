@@ -1,15 +1,43 @@
-# Tips for building agentic systems
+### **Chapter 11 Summary: Tips for Building Agentic Systems**
 
-Treat the agent as five layers you tune on their own, then join: persona, tools and actions, reasoning and planning, knowledge and memory, and evaluation and feedback.
+Chapter 11 of *AI Agents in Action, Second Edition* distills **production lessons** into layer-by-layer guidance and three reference workflows—support, retrieval-augmented answering, and deep research—so design choices stay testable, grounded, and measurable.
 
-- **Persona.** Write it as a contract. Give it a narrow role, hard boundaries, the critical rules at both ends of the instructions, and an honest way out when the answer is missing. Return a typed object when another program will read the result. Inject the date, the org, and the user at runtime, and inject little else.
-- **Tools.** One job each, with a crisp name, a docstring, and typed inputs. The schema is how the model learns the tool. Decide when a call is allowed, stop when one result is enough, and keep the set small, because every tool rides along on every call. Plan timeouts, retries, and an error the agent can read. A hosted or MCP tool is fine once you have checked that it is safe and focused.
-- **Reasoning.** For real work, alternate thought, action, and observation, or draft a short checklist and then execute. Cap the turns, and mark a partial answer when the budget stops you. Add a quick self-check before the final. Turn reasoning down for a one-shot task. A model that already thinks still needs those limits.
-- **Knowledge.** Make retrieval a tool over a store, and leave the document pile out of the prompt. Keep the live thread separate from long-term facts, and prune. Mix semantic search, keywords, and structure. Chunk by meaning, answer from what came back, and allow an honest miss. Partition by role and tenant, and keep the store fresh.
-- **Evaluation.** Trace prompts, tools, tokens, latency, and outcomes. Run a small test set, including a model judge, on every prompt or model change. Capture what people actually thought of the answer. Put policy and schema checks on inputs, risky tools, and outputs. Measure, watch, then change, including the indexes and APIs underneath.
+---
 
-A support agent is those layers on one job. Start with a narrow charter such as orders, returns, and status. Ground answers in manuals, verify identity before account data, and hand an upset caller or a large refund to a person. In production the "one agent" is a small crew: triage, retrieval, a grounding check, a scoped action behind a guardrail, then the reply, with traces and a thumbs vote for the audit.
+#### **1. Tips by the Five Layers**
 
-Keep a RAG system as one retrieve-and-answer call until routing, critique, or an action earns another agent. Then split router, retriever, and answerer, and add a critic when a weak retrieval should be tried again, with a bounded number of retries. Require citations, and log the cases that should have been an honest miss.
+* **Persona layer**: Treat instructions as an **API contract** with a crisp role, explicit exclusions, repeated guardrails, a structured “I don’t know” path, and runtime facts injected sparingly to avoid token bloat.
+* **Tools and actions**: Ship **single-purpose tools** with clear schemas and docstrings, control when tools may run, cap exposed MCP surface area, and return structured errors so the model can recover.
+* **Reasoning and planning**: Use ReAct or plan-then-execute for multistep work, cap turns, add a brief **self-review** before final output, and dial reasoning down for one-shot tasks.
+* **Knowledge and memory**: Make **RAG a first-class tool**, separate session thread context from long-term vector memory, hybridize search, chunk semantically, ground answers strictly in retrieval, and partition corpora by role or tenant.
+* **Evaluation and feedback**: Trace prompts, tools, latency, and outcomes; automate eval suites and guardrails; capture **human feedback**; and iterate with an AIOps loop across indexes and APIs the agent touches.
 
-Build an internal deep-research crew only when a simpler system cannot reach the sources you care about. A planner is the brain. Stateless workers for search, extract, analysis, and writing are the hands. Facts come from tools. A critic checks coverage and contradictions before the report, citations stay attached, partial findings can stream, and a cache plus a token budget keeps the run from repeating itself or going stale.
+---
+
+#### **2. Customer Support Agent**
+
+* **Narrow charter**: Begin with bounded intents such as orders, returns, and status, expanding domains only after grounding and escalation paths prove reliable.
+* **Grounding and safety**: Route answers through **RAG over policies and manuals**, add grounding checks before users see text, and verify identity before account or refund actions under least privilege.
+* **Human escalation**: Expose an escalate tool for angry users, ambiguous policy, or high-impact refunds, and collect per-conversation feedback for later eval review.
+* **Resilience and cost**: Apply retries, fallbacks, timeouts, caching of frequent policy answers, rate limits on external APIs, and **transparent traces** of searches, tools, and citations for audit.
+* **Multi-agent workflow**: Production support is usually a chain—**triage, retrieval, grounding, scoped API action behind a guardrail, final answer**—not a single monolithic bot.
+
+---
+
+#### **3. RAG Agent System**
+
+* **Orchestrate only when needed**: A one-shot retrieve-and-answer path is enough for many cases; add agents when routing, critique, or post-retrieval actions justify the overhead.
+* **Modular roles**: Split **router or triage, retriever, answerer**, and optionally a critic that triggers corrective retrieval when passages fail to support the question.
+* **Retrieval quality**: Tune ANN indexes, metadata filters, hybrid search, reranking, and embeddings; log recall pain points and cases that should have ended in “I don’t know.”
+* **Grounding discipline**: Instructions must **use only retrieved context**, require citations or excerpts, and prefer honest uncertainty over confident wrong answers.
+* **Refinement loops**: When ranking shows weak coverage, a refinement agent may rewrite the query and search again behind a **bounded retry counter** to prevent infinite retrieval cycles.
+
+---
+
+#### **4. Deep Research Agent System**
+
+* **Two-tier orchestration**: A **research planner** breaks goals and delegates to stateless workers—web search, extraction, analysis, writing—while keeping long memory out of tool-like hands.
+* **Tool policy**: Force factual claims through retrieval or web tools; forbid unsourced assertions in the planner’s instructions so synthesis stays tied to evidence.
+* **Critique before delivery**: A critic pass checks coverage, bias, and contradictions; insufficient material returns control to the planner rather than shipping a thin brief.
+* **Streaming experience**: Stream partial findings or status updates so users perceive progress and can approve checkpoints on long runs.
+* **Budgets and cache**: Deduplicate repeated queries, cap tokens and external calls, and **refresh caches** on a schedule so speed does not trade away freshness.

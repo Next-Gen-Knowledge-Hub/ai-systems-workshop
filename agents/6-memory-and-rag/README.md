@@ -1,17 +1,41 @@
-# Working with memory and knowledge
+### **Chapter 6 Summary: Working with Memory and Knowledge**
 
-A training cutoff is a wall. Yesterday's upload, last week's policy, and a preference from the previous session all sit on the other side. Retrieval searches a store that can grow on its own and places only the useful pieces into the one prompt, which is still finite. Knowledge is outside material: documents, tables, logs. Memory is the agent's own experience, fetched by the same move.
+Chapter 6 of *AI Agents in Action, Second Edition* covers retrieval-augmented generation, vector and hybrid search, practical knowledge agents, and MCP-backed memory architectures that extend agents beyond fixed model training.
 
-RAG has two phases. Ingestion loads documents, cuts chunks, embeds them, and writes the index. At question time you embed the query in that same space, pull the nearest chunks, and let a language model write from them. The embedding model and the answering model do different jobs.
+---
 
-Semantic search compares meanings, so a question about vehicles can land on a passage about cars. Three caveats ride along. A close neighbor can still be a false, stale, or untrusted passage. A fixed top-k quietly drops whatever sat at rank eleven. Approximate nearest-neighbor search trades a guarantee for speed.
+#### **1. Understanding Retrieval in AI Applications**
+* **Retrieval bridge**: **Retrieval** connects unbounded external stores to the **bounded context window** by fetching only the most relevant pieces for each LLM call.
+* **Knowledge versus memory**: **Knowledge** is external reference material; **memory** captures experiential interaction history—both use the same **retrieve-then-augment** pattern.
+* **RAG phases**: **RAG** splits into **ingestion** (load, chunk, embed, index) and **query-time retrieval** (embed query, search, augment prompt, generate).
+* **Semantic search**: **Dense embeddings** compare meaning rather than surface keywords, enabling matches like “vehicles” to “cars,” with pitfalls around **factual correctness**, fixed **top-k**, and **approximate** nearest-neighbor indexes.
+* **Why agents need retrieval**: Models cannot answer from **post-training facts** unless the system supplies current documents, policies, prices, or session-specific state at query time.
 
-Pick the store by the question. Prose wants vectors. A code, a price, or a join wants a table. "Who reports to whom" wants a graph. A practical agent carries more than one.
+---
 
-- **Embeddings and Chroma.** A dense vector is a few hundred to a few thousand floats, with related meanings nearby. Chroma, fine as a local store while you learn, ranks neighbors by cosine distance: zero is nearly the same text, and two points the other way. TF-IDF and BM25 still win when the exact error code, name, or rare token is the point.
-- **Vector search and hybrid search.** A vector-only agent misses literal strings, mixes up jargon, lets duplicates crowd the top, cannot hop a relationship, and can serve a stale price. Run a keyword search beside the vector search and fuse the ranked lists. Reciprocal rank fusion scores by rank, so a keyword score and a cosine score never have to share a scale. Have the answer quote the passages, and say so when the source is silent.
-- **Memory through MCP.** Point the same loop at the past. A graph memory server holds entities, relationships, and observations the agent chooses to write. A vector collection holds the wording of earlier talk. Each turn, search by meaning, walk the graph for the entities those hits named, and store anything new in both.
-- **Semantic, episodic, and procedural memory.** Facts and concepts, events, and the steps of a process. Events and procedures sit naturally in rows. Embed them too, and draft the questions a later user might ask, so a future lookup has more ways in.
-- **Compression and forgetting.** Cluster near-duplicates and replace each cluster with one summary. Compress when the items are cousins. Drop entries when the store is the same fact said again. Memory wants this on a schedule. A knowledge load usually wants it once. In healthcare, finance, and law, a retention rule can make eager deletion the larger risk.
+#### **2. Vector Databases and Similarity Search**
+* **TF-IDF baseline**: **TF-IDF** builds sparse vectors from term importance and supports **cosine similarity**, but cannot align different words with the same concept.
+* **Neural embeddings**: Pretrained **embedding models** map text into dense vectors where related meanings sit nearby, trained by predicting contextual structure rather than counting tokens.
+* **Cosine similarity**: **Cosine similarity** compares vector direction and is standard for both sparse and dense retrieval, ignoring magnitude effects from document length.
+* **In-memory and Chroma**: Vectors can live in arrays for experiments; **Chroma DB** provides a practical local **collection** API with distance-ranked query results.
+* **Hybrid signal**: Production systems often blend **BM25/keyword** precision with **semantic recall** because neither alone covers codes, jargon, duplicates, and freshness.
 
-The chapter's stores are learning props. They vanish when the process exits. Production still wants a durable backend, permissions on every lookup, and a check that the right memory came back.
+---
+
+#### **3. Building Practical RAG Knowledge Agents**
+* **Vector-only limits**: A **vector-search RAG agent** grounded in ingested chunks answers well on semantic questions but may miss **exact times, codes, or rare strings** without complementary search.
+* **Grounding**: **Grounding** instructions require answers to cite retrieved passages and admit when context is insufficient, reducing **hallucination** from parametric model knowledge.
+* **Hybrid RAG agent**: Agents with separate **vector and keyword tools** choose or combine methods, enforcing quotes and reference markers in structured answer formats.
+* **Relevance engineering**: Tables of failure modes—missed literals, jargon drift, duplicate crowding, stale facts—motivate **keyword**, **SQL**, **graph**, and **hybrid** supplements beyond pure similarity.
+* **Reciprocal Rank Fusion**: **RRF** merges ranked lists from heterogeneous scorers by rank position, avoiding calibration problems between BM25 and cosine scores.
+
+---
+
+#### **4. Adding Memory to Agents with MCP**
+* **Architectural memory view**: Agent memory decomposes into **context window**, **external storage**, **state scratchpads**, and **retrieval mechanisms** rather than purely cognitive metaphors.
+* **Graph memory via MCP**: The MCP **memory server** exposes tools to store **entities, relationships, and observations** in a graph optimized for traversing connections.
+* **Hybrid memory**: **Hybrid memory** runs **semantic search** first for conversational context, then **graph lookups** for structured facts, writing new information to both stores.
+* **Semantic, episodic, procedural**: **Episodic** events and **procedural** steps fit relational patterns; **semantic augmentation** generates likely future queries to improve later recall of those records.
+* **Compression and forgetting**: **Cluster-and-summarize compression** collapses near-duplicate memories; **forgetting** or eviction controls noise, with regulated domains balancing retention rules against pruning risk.
+
+---

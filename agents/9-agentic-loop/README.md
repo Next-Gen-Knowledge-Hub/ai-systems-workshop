@@ -1,14 +1,39 @@
-# Understanding the agentic loop
+### **Chapter 9 Summary: Understanding the Agentic Loop**
 
-A loop earns its place when one call cannot finish the job: the facts arrive in stages, each pass improves the draft, a queue of items is waiting, the next move depends on the last result, or the useful sources only appear while you work. Classification, a short answer, and a format change stay one-shot. Extra cycles there only add delay and spend.
+Chapter 9 of *AI Agents in Action, Second Edition* extends the sense-plan-act-learn inner loop to external task loops and meta-level control, with deep research, batch task processing, orchestrator-driven delegation, and collaborative multi-agent iteration as practical implementations.
 
-Every layer stands on the same four pieces: a goal, a plan, state that survives the cycle, and a clear rule for when to stop.
+---
 
-- **Inner SPAL (sense-plan-act-learn).** The agent reads its state, chooses a next step, uses a tool, checks the result, and carries what it learned forward. It picks the tool and the stop. You supply the goal, the tools, and the boundaries.
-- **Task loop.** Keep the long plan and the accumulated state in code outside the model. A general-purpose model is a weak home for a long horizon, and the window fills. Deep research is the usual shape: typed state and plan, tools, and one iteration that returns findings, follow-up questions, a satisfaction flag, and a confidence score, then a termination gate.
-- Stack that gate. A hard iteration cap and a cost ceiling are the safety net. Goal-met and a quality bar are the happy exits. Stagnation catches the run that looks busy while back-to-back findings barely change. Leave any of the defensive stops off and the loop is an incident.
-- Let the research agent search. After the loop, a separate synthesis agent writes the report from the full trail and marks an early stop. A repetitive task loop is the same idea on a known queue: take one item, record the outcome, retry a transient failure, and stop when the queue is empty. The list already is the plan.
-- **Meta loop.** An agent owns the decision, the state, and the plan, so the campaign can change while it runs. Code no longer holds those three.
-- Orchestration is one delegator that treats specialist workers as tools and can add or reorder subtasks when the first split was incomplete. Use it when the breakdown itself is uncertain. Each decision is another model call, so a known checklist should stay a plain task loop.
-- Collaboration is peers on one shared state. A researcher, a critic, and a synthesizer take turns until they agree the goal is met or the round limit hits. A thin turn manager only chooses whose turn it is.
-- Orchestrate independent work such as batch jobs and parallel search. Collaborate when the pieces depend on each other and the output gets better if someone argues with it. If you are unsure, start with orchestration. It is easier to debug. Move to collaboration when quality needs that argument.
+#### **1. Three Loop Layers (Inner SPAL, Task Loop, Meta Loop)**
+* **Layer 1 — inner SPAL**: The agent cycles **sense, plan, act, and learn** until a goal or termination condition is met; the model chooses tools, judges progress, and decides when to stop within boundaries the developer sets.
+* **Core elements**: Every loop variant rests on **goal, plan, internal or external state**, and an explicit termination decision—the difference between convergence and runaway or premature exit.
+* **Layer 2 — task loop**: Long-horizon work **externalizes plan and state** in code so context does not overwhelm the model and iterations can persist across many short internal cycles.
+* **Layer 3 — meta loop**: An **agent rather than fixed code** controls decide, state, and plan, enabling adaptive replanning; subtype depends on whether one orchestrator delegates or peers collaborate.
+* **Chapter focus**: After establishing SPAL, the chapter emphasizes **layer-2 task loops** and **layer-3 orchestration versus collaboration** patterns for complex goals.
+
+---
+
+#### **2. Deep Research Task Loop**
+* **External state and plan**: Typed models such as `ResearchState` and `ResearchPlan` track **findings, sources, follow-up questions, subtopics**, and iteration counts, serialized via `to_context` to manage window usage.
+* **Tools and MCP**: Search and other capabilities attach through **MCP servers** with proper async lifecycle so tools are available only for the loop’s duration.
+* **Iteration output**: Strongly typed `ResearchIteration` fields—**summary, sources, follow-ups, goal_satisfied, confidence, plan updates**—let programmatic controllers parse each cycle without fragile free-text parsing.
+* **Termination gate**: Layer **hard iteration and budget limits** with goal satisfaction, quality thresholds, and **stagnation detection** when consecutive summaries stop adding new information.
+* **Loop controller**: Code pops follow-up questions, applies plan updates, truncates what the agent sees when needed, and exits when `should_continue` is false.
+* **Synthesis**: A **separate synthesis agent** compiles all findings into a structured report after exploration ends, preserving separation between discovery and final narrative.
+* **When to loop vs batch**: Use loops for **iterative discovery, refinement, conditional branching, and multisource aggregation**; skip loops for single-pass classification or simple Q&A. **Repetitive task loops** drain a defined queue with progress tracking and retries without a separate external plan.
+
+---
+
+#### **3. Multi-Agent Orchestration Loops**
+* **Orchestrator role**: A meta-level **orchestrator agent** maintains global plan and state, outputs structured decisions such as delegate, re_plan, or finalize, and never executes search tools directly.
+* **Worker specialization**: **Research and analysis workers** receive narrow assignments and return typed iteration-shaped output the orchestrator merges into shared state.
+* **Dynamic replanning**: When worker results reveal gaps, the orchestrator can **add or reprioritize subtasks** mid-loop—adaptivity a hardcoded layer-2 loop cannot match.
+* **Cost tradeoff**: Each orchestrator turn is an extra **LLM call**; reserve orchestration for goals where decomposition is uncertain or must evolve; use deterministic dispatch when the task list is known upfront.
+
+---
+
+#### **4. Collaborative Agentic Loops**
+* **Peer pattern**: Multiple agents share **CollaborationState** and rotate turns under a lightweight manager; there is no single delegator—agents critique and refine collective work.
+* **Researcher–critic–synthesizer**: A common triad where one agent gathers evidence, another **challenges gaps and contradictions**, and a third weaves validated material into coherent output.
+* **Consensus termination**: Rounds continue until **enough recent contributors agree the goal is met** or maximum rounds exhaust, with configurable consensus thresholds.
+* **Orchestration vs collaboration**: **Orchestration** fits independent subtasks and parallel pipelines; **collaboration** fits interdependent work where adversarial review improves quality—start with orchestration for simpler debugging, add collaboration when output demands rigorous challenge.

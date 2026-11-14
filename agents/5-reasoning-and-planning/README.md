@@ -1,17 +1,40 @@
-# Agent reasoning and planning
+### **Chapter 5 Summary: Agent Reasoning and Planning**
 
-An LLM predicts the next token and then the job is gone. A plan survives the next call only when you leave it in the prompt, a tool result, or a store you own. Decomposition asks what the pieces of the goal are. Planning asks the order, the tools, and how those pieces join. A sensible split followed by the wrong sequence fails differently from a tidy sequence built on the wrong pieces, and the repair follows the failure.
+Chapter 5 of *AI Agents in Action, Second Edition* examines how large language models decompose complex goals and execute multi-step tasks using structured reasoning strategies, planning patterns, and external tools.
 
-Everyday tasks run on habit. The model has neither habit nor a private picture of the room, so those steps have to be written down. A plain model answers in one forward pass and will skip the hard middle step. A reasoning model spends extra test-time compute before the visible answer. Treat that phase as deliberation inside a single call. A typed plan, a tool loop, and an audit trail are still yours to build and to keep.
+---
 
-Add structure when the horizon is long, several tools compete, a mistake is costly, or someone later must see why a step ran. A single reversible lookup can stay a plain completion.
+#### **1. Fundamentals of LLM Reasoning & Planning**
+* **Decomposition & Planning**: Reasoning requires two distinct cognitive operations: **decomposition** (breaking a problem down into smaller subproblems) and **planning** (determining the sequence, dependencies, and tool execution strategy for those subproblems).
+* **Reasoning Scaffolding**: While non-reasoning models require explicit prompting techniques to think step-by-step, frontier reasoning models handle step-by-step deliberation natively.
+* **Chain-of-Thought (CoT)**: Directs an LLM to generate explicit, step-by-step intermediate thoughts before outputting a final answer, which improves performance on complex logic tasks.
+* **The ReAct Paradigm (Reason, Act, Observe)**: Alternates between internal natural-language reasoning steps and external tool executions in an interactive loop. ReAct uses observations from tool outputs to update reasoning dynamically and adjust subsequent actions.
+* **Strategic Planning**: Moves beyond single-question handling by generating explicit, multi-step plans stored externally in memory or context, allowing the agent to track progress across long-horizon goals.
 
-- **Chain-of-thought.** Ask for the intermediate steps in the completion, then the answer. Spend it on dates, units, and local logic. There is no observation in that pass, so a missing fact gets narrated. Show the user the answer. Keep the chain in the log.
-- **ReAct.** Reason, act, observe, and let the observation rewrite the next thought. The runner calls the model, executes the tool, appends the result, and calls the model again, under a turn cap. A chain that ends in one tool call is still a single plan. When the job has a join, store the plan and let ReAct execute only the current step.
-- **LLM planning.** That stored outline holds subtasks, dependencies, and a check for done, and later hops reread it. Speak in tool names you actually registered. When the plan changes, patch the object so the next hop reads the revision.
-- **Tree-of-thought.** Generate candidates, score them, expand the winners, and stop at a budget. Pruning is the point, and the score lives in your code. A sentence that says to consider three options is a list inside one completion. Execute the winner with ReAct, and leave the discarded branches out of the user answer.
-- **Reflexion.** Attempt, critique, and attempt again with that critique in the next prompt. The weights stay put, so the gain is a richer next prompt, and only when you can tell a good attempt from a bad one. A hint that worked can be saved and reused on the next problem of the same shape. Keep the retry off any action that must happen only once.
+---
 
-Choose the pattern from the shape of the hop, and keep that choice stable from run to run. Lookups stay a forward pass. Logic with no tools gets a chain. Live data gets ReAct. Plans you can score get a tree. A detectable, reversible failure gets Reflexion. Listing every pattern in one persona lets the sampler pick a different mood on each run.
+#### **2. Instructing Agents to Reason and Plan**
+* **CoT Agent Implementation**: Embeds step-by-step reasoning instructions into the agent's system prompt to force explicit intermediate calculations.
+* **ReAct Agent Implementation**: Equips the agent with specialized tool functions (such as time-jump functions) and instructs it to reason, execute a tool call, inspect the observation, and reflect before proceeding.
 
-The sequential-thinking MCP server is the pad those patterns write to. One tool records a thought, a revision, or a branch, and later steps read it back. The model still does the thinking. Prove the agent can see the tool before you pile on a puzzle. A fresh local process starts empty, so a plan that must outlive the process needs a transport that keeps the pad. World tools still own the facts.
+---
+
+#### **3. Advanced Reasoning Strategies**
+* **Tree-of-Thought (ToT)**: Explores multiple reasoning paths in parallel, evaluates candidate solution steps, prunes unpromising branches, and backtracks when a path fails. It is effective for complex search or strategy tasks but incurs higher token and latency costs.
+* **Reflexion**: A self-critique pattern where a solver agent's output is evaluated by a critic agent. The critic generates feedback hints that are injected back into the solver's context for iterative retries without updating model weights.
+* **Pattern Selection**: Matches specific strategies to task requirements—CoT for logic puzzles, ReAct for tool-heavy retrieval, ToT for deep strategic search, and Reflexion for iterative self-correction.
+
+---
+
+#### **4. Sequential Thinking MCP Server**
+* **External Reasoning Scratchpad**: Uses Anthropic's reference Model Context Protocol (MCP) server, which provides a dedicated `SequentialThinking` tool.
+* **State Continuity**: The server does not perform reasoning itself; instead, it provides persistent external storage for thought steps that the agent rereads at each step to maintain continuity across turns.
+* **Combining Reasoning Patterns**: Enables agents to integrate CoT planning, ReAct tool execution, ToT branching, and Reflexion feedback into a unified reasoning architecture.
+
+---
+
+#### **5. Key Design Best Practices**
+* **Tool Scoping**: Tool lists should be kept lean (fewer than 10 tools per agent) to prevent context inflation and tool selection errors during ReAct loops.
+* **Guardrails & Limits**: Hard turn caps and typed input/output validation are required to prevent infinite execution loops and validate intermediate plan outputs.
+
+---

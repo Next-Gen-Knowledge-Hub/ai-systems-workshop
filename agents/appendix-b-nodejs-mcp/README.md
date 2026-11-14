@@ -1,9 +1,35 @@
-# Appendix B: Node.js setup for local MCP servers
+### **Appendix B Summary: Node.js Setup for Local MCP Servers**
 
-Many MCP servers ship as npm packages. `npx`, which comes with Node.js, fetches a package when it is not already cached, finds its executable, and runs it. That is how a desktop app, an IDE, or your own agent starts a local server without a custom installer.
+Appendix B of *AI Agents in Action, Second Edition* prepares a **Node.js LTS toolchain** so MCP servers published on npm can be launched with `npx` from agents, IDEs, or desktop clients without custom install scripts.
 
-Install the current Node 20 LTS or newer: the official installer or a version manager on Windows, Homebrew on macOS, and nvm (or Node's own distro packages) on Linux and WSL. Open a fresh shell and check `node`, `npm`, and `npx`. Node should report v20 or later.
+---
 
-`npx` looks in local `node_modules`, then in its cache, and downloads only if both miss. The first launch is the slow one. A client that spawns the server cannot answer an install prompt, so pass `-y`. The filesystem server is the sanity check: `npx -y @modelcontextprotocol/server-filesystem` plus one allowed directory. It speaks MCP on standard input and output. In client config, the command is `npx` and the arguments are `-y`, the package name, and that directory.
+#### **1. Installing Node.js**
 
-If `npx` is missing, reopen the shell so the path updates. Permission errors usually mean Node was installed as root; switch to a user-level install. If the client says the server died at once, run the same command in a terminal and read the error there. A hang at startup is almost always a missing `-y`. Clear a stale cache with `npm cache clean --force`, or pin a version on the package name, and stay on the current LTS with the same tool you used to install Node.
+* **LTS baseline**: MCP examples assume **Node 20 LTS or newer**, which bundles `npm` and `npx` together.
+* **Windows options**: Use the official installer from nodejs.org or **nvm-windows** when multiple Node versions must coexist.
+* **macOS path**: Homebrew (`brew install node`) or the macOS installer from nodejs.org are the usual routes.
+* **Linux and WSL**: **nvm** installs user-local Node without sudo; distribution packages via NodeSource are an alternative when nvm is undesirable.
+
+---
+
+#### **2. Verifying Node and npx**
+
+* **Version checks**: Fresh shells should report versions for `node`, `npm`, and `npx`, with Node at **v20+**; “command not found” means PATH or nvm activation was skipped.
+* **npx resolution**: `npx` prefers local `node_modules`, then the global npx cache under the user home, downloading from npm only on a cache miss—so the **first run is slower** than later ones.
+
+---
+
+#### **3. Running an MCP Server with npx**
+
+* **Command shape**: Typical launches follow `npx -y <package> [args...]`, where **`-y` suppresses the install prompt** subprocess clients cannot answer.
+* **Filesystem example**: `npx -y @modelcontextprotocol/server-filesystem` plus an allowed directory validates the server in a terminal; it speaks MCP over stdio until stopped with Ctrl-C.
+* **Client configuration**: MCP JSON configs set `"command": "npx"` and pass `-y`, the package name, and server-specific arguments as the `args` array—the same pattern works for other npm-hosted MCP servers.
+
+---
+
+#### **4. Troubleshooting and Keeping Node Healthy**
+
+* **Common failures**: Missing `npx` after install needs a new shell; **EACCES** often traces to sudo-installed Node; immediate client exit deserves a direct terminal run to surface stderr; hangs frequently mean `-y` was omitted.
+* **Cache hygiene**: `npm cache clean --force` or pinning `@version` on the package name forces a fresh download when a stale cached server misbehaves.
+* **Staying current**: Re-run installer, `brew upgrade node`, or `nvm install --lts` periodically, then repeat the three version checks so agents keep using supported Node releases.

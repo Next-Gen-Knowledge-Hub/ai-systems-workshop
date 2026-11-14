@@ -1,16 +1,35 @@
-# Large language models, prompting, and agents
+### **Chapter 2 Summary: Core Components – Large Language Models, Prompting, and Agents**
 
-Under every agent is a probabilistic token machine. Training teaches it to predict the next token. At inference it runs the context through learned attention and feedforward weights and emits a distribution. Sampling picks one token, and the loop continues until an end marker. What feels like intelligence is that fast prediction. Alignment, including learning from human feedback, teaches the model to follow instructions and stay helpful. Fresh facts and stronger reasoning come from other training, and from the prompt you write.
+Chapter 2 of *AI Agents in Action, Second Edition* focuses on assembling the core building blocks required to transform a large language model into a reliable, tool-using agent using the **OpenAI Agents SDK**.
 
-Tokens are pieces of text, often smaller than words, and braces and field names get counted too. The same facts in JSON can cost far more than prose. Providers bill output tokens at a higher rate than input, and a long prompt makes the next token less certain. Measure with the model's tokenizer. Temperature flattens or sharpens the distribution. Nucleus sampling drops the low-probability tail. A max-token cap stops rambling and bounds the bill. I usually move only temperature and that cap, and I tune temperature or top-p while leaving the other at its default. Temperature zero narrows the pick. Explicit instructions do the real stabilizing. A seed helps when a debug run must repeat. Keep reasoning effort low on routine steps, and spend it on planning and stuck loops.
+---
 
-The persona is how you make the agent predictable. Name the role, put the task first, fence the user's data with one delimiter style, state numeric bounds, show a few labeled examples, ask for silent step-by-step thought, and say what to do. Write it the way you would brief a sharp new hire who shares none of your assumptions. Keep stable instructions at the top so a prompt cache can reuse them, and put the changing content at the bottom.
+#### **1. Understanding Large Language Models (LLMs)**
+* **Probabilistic Token Machines**: LLMs generate text by predicting the most probable next token based on training distributions.
+* **Tokens & Context Budgeting**: Text length does not equal token length; tracking token counts (via tools like `tiktoken` or SDK telemetry) is necessary to keep interactions within context windows and control costs.
+* **Generation Knobs & Parameters**:
+  * **Temperature**: Controls response variability. Setting `temperature = 0` forces the model to select the highest-probability token at each step, ensuring consistent, repeatable output for debugging and planning.
+  * **Top-P**: An alternative sampling method based on cumulative probability thresholds. Providers recommend adjusting either `temperature` or `top-p`, but not both simultaneously.
+  * **Max Tokens & Seed**: `max_tokens` limits response length to prevent runaway API costs, while `seed` enables reproducible output during evaluation runs.
 
-Prompts fail in familiar ways: too many topics in one window, rules that contradict, a tiny prompt that causes a round trip per branch, or so many constraints that some get ignored. When a prompt will not sit still, split it into role-sized steps. An agent keeps looping until the goal is met or clearly out of reach, so describe the decisions and the branches.
+---
 
-The OpenAI Agents SDK is the light runtime I use to turn that prompt into a running agent. Pin the model, set the knobs for the role, and type the output so the next step receives a schema. Tracing shows every model call and tool call, in order, with latency. Tools create the agency. Keep the list short. Chain a call when one result feeds the next, and issue independent calls together.
+#### **2. Controlling LLMs with Prompt Engineering (Agent Persona)**
+* **Defining the Persona Layer**: Prompt engineering establishes the agent's system prompt (its persona layer), defining its role, tone, domain focus, and operating constraints.
+* **Core Prompting Techniques**: Effective agent prompts rely on assigning a clear role, front-loading primary instructions, fencing user inputs with unique delimiters, providing few-shot examples, and incorporating step-by-step reasoning.
+* **Avoiding Prompt Pitfalls**: Over-engineering prompts can cause failures due to excessive complexity, contradictory instructions, inconsistent delimiters, or rule-stuffing. Complex workflows should be broken down into smaller, role-specific agent steps rather than packed into a single monolithic prompt.
 
-- The model proposes a distribution. Your sampling strategy chooses the token.
-- A coder wants a low temperature so syntax can repeat. A writer wants more spread and a nudge toward new ideas.
-- Typed outputs plus traces keep a stochastic planner debuggable once tools enter the loop.
-- Read the trace before you rewrite the prompt. The order of the tool calls is the plan the model actually ran.
+---
+
+#### **3. Building Agents with the OpenAI Agents SDK**
+* **Minimal Agent Setup**: Demonstrates how to configure an agent's name, system instructions, and model settings, then execute runs synchronously or asynchronously via a runner.
+* **Typed Inputs and Outputs**: Uses **Pydantic** schemas to strongly type agent responses (`output_type`). Strongly typed I/O removes fragile string parsing and prevents response variability from breaking downstream agent steps.
+* **Agent Tracing**: Leverages built-in SDK tracing and execution logs to inspect prompt calls, token overhead, and step-by-step decision paths for debugging and optimization.
+
+---
+
+#### **4. Enhancing Agents through Tool Integration**
+* **From Prompt Chaining to True Agency**: Simple prompt chaining passes static text between prompts, whereas true agency requires providing tools (local functions, APIs, or MCP servers) that the agent can autonomously choose when and how to execute.
+* **Tool Chaining & Scoping**: Agents sequence multiple tool calls autonomously to complete higher-level goals. Keeping tool lists lean and scoped reduces context overhead and minimizes tool selection errors.
+
+---

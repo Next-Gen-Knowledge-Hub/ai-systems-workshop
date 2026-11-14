@@ -1,5 +1,6 @@
 *.pdf
 *.PDF
+!mindmap.pdf
 .DS_Store
 .env
 .env.*
