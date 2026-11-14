@@ -1,325 +1,45 @@
-# 19. Training and Deploying TensorFlow Models at Scale
+### **Chapter 19 Summary: Training and Deploying TensorFlow Models at Scale**
 
-Companion notes for **Chapter 19** of *Hands-On Machine Learning with
-Scikit-Learn, Keras, and TensorFlow* (2nd edition, Aurélien Géron;
-O'Reilly, 2019).
+Chapter 19 of *Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow* (2nd edition, Aurélien Géron) turns trained Keras models into production services with TensorFlow Serving and cloud AI Platform, compresses and ships them to mobile and browser runtimes, accelerates training with GPUs, and scales optimization across devices via distribution strategies and managed training jobs.
 
-You fitted a policy in a simulator, or a classifier on a table. This
-chapter is what you do when the artifact is **your graph**: export
-it, serve it, squeeze it onto a phone, and — if training still hurts —
-put it on GPUs and more than one of them. Skip it and you will wrap
-`model.predict` in Flask on a laptop, call that "MLOps," and then be
-surprised when a second GPU sits idle, a mobile build is 400 MB, or a
-teammate points the app at a vendor chat API and uses this chapter's
-words.
+---
 
-## The mental model
+#### **1. Serving with TensorFlow Serving**
+* **Why serve separately**: A dedicated **prediction microservice** decouples models from app code, eases **versioning, A/B tests, and horizontal scaling**, and keeps clients on a stable API (REST or gRPC).
+* **SavedModel export**: `tf.saved_model.save()` bundles the **computation graph, variables, and signatures**; preprocessing should live **inside the exported model** so training and serving stay aligned.
+* **Docker TF Serving**: Containerized serving exposes **REST (8501) and gRPC (8500)**, watches a model repository for **new versions**, supports **graceful version switches**, optional **batching**, and rollback by removing a version folder.
 
-Three artifacts people keep calling "the model in production." They
-do not share a deploy path.
+---
 
-```
-  THIS CHAPTER                         OTHER JOBS
-  ------------                         ----------
-  data -> train -> SavedModel          POST /chat  (provider weights)
-       |                                    |
-       v                                    v
-  TF Serving / TF Lite / TF.js         adapter to someone else's API
-       |                                    |
-       v                                    v
-  scores for *your* task               tokens for *their* LLM
-                                            |
-                                            v
-                                       agent runtime / workflow container
-```
+#### **2. Cloud deployment (Google AI Platform)**
+* **Hosted prediction**: Upload SavedModels to **Cloud Storage**, register model versions on **AI Platform**, and use **autoscaling TF Serving** backends with pay-when-used economics.
+* **Secure clients**: **Service accounts** and token-based auth (not end-user credentials) call the REST API via **google-api-python-client** with JSON instances and `serving_default` signatures.
+* **Operations**: Cold-start latency, **minimum container counts**, load balancing across servers, and **Kubernetes** orchestration appear when **QPS** grows.
 
-The one sentence to remember a year from now: **TF Serving ships a
-SavedModel you trained; calling a provider API ships someone else's
-weights; deploying an agent ships a loop.**
+---
 
-If you cannot point at a SavedModel (or ONNX, or a TF Lite flatbuffer)
-that your org compiled, you are outside this chapter.
+#### **3. Mobile, embedded, and web deployment**
+* **TensorFlow Lite**: Converts SavedModels to **FlatBuffers** for low RAM/latency; **post-training quantization** (8-bit weights) shrinks downloads, while **full integer quantization** and **quantization-aware training** preserve speed on device NPUs.
+* **Browser inference**: **TensorFlow.js** loads converted models for **on-client prediction** when privacy, offline use, or latency matters.
+* **Trade-offs**: Smaller bit-widths and fused ops save size and energy at some **accuracy** cost; edge deployment favors lightweight architectures.
 
-## Serving a TensorFlow Model
+---
 
-A Keras/TF net in a notebook is not an endpoint. Ad-hoc Python
-processes do not version graphs, batch incoming requests, or let you
-roll back to yesterday's weights without a Git archaeology session.
+#### **4. GPUs and single-machine performance**
+* **Hardware path**: **NVIDIA GPUs** with CUDA/cuDNN accelerate training; cloud **Deep Learning VMs**, **Colab**, and quotas govern access to accelerators including **TPUs**.
+* **Memory management**: Default **full GPU memory capture**, **CUDA_VISIBLE_DEVICES**, **virtual device memory limits**, and **memory growth** let multiple processes or notebooks share cards safely.
+* **Placement and parallelism**: `tf.device`, soft placement, **inter-/intra-op** thread pools, and graph scheduling run **CPU preprocessing** beside **GPU math**; multiple models or branches can occupy separate devices.
 
-Export a **SavedModel** (the TF 2 unit of exchange: graph + weights +
-signatures). Run a **serving binary** that loads it and exposes gRPC
-and/or REST. TensorFlow Serving is the 2019-shaped answer in this
-book: model versions on disk, a config that points at the bundle,
-warm-up, batching, the ability to serve v12 while you load v13.
+---
 
-```
-  trainer  -->  SavedModel/  -->  TF Serving  -->  client
-                  |                  |
-               variables          gRPC / REST
-               signatures         version policy
-```
+#### **5. Training across multiple devices**
+* **Parallelism choices**: **Model parallelism** shards layers (often communication-heavy on dense nets); **data parallelism** replicates the model and averages **gradients** across replicas—usually preferred.
+* **Strategies**: **MirroredStrategy** (AllReduce on one host), **CentralStorageStrategy** (parameters on CPU), and comparisons of **synchronous vs asynchronous** updates address **stale gradients** and **bandwidth saturation**.
+* **Distribution Strategies API**: `MirroredStrategy().scope()` around model creation trains Keras on **all local GPUs** with minimal code change; batches must divide evenly across replicas.
 
-Clients send tensors that match the signature. The contract is
-**your** input pipeline's contract: same preprocessing, or you have
-trained/serving skew — the silent killer with a new costume.
+---
 
-Training preprocessing in `tf.data` and then reimplementing it in the
-client "for speed" is how one extra normalization makes production AUC
-fiction. Prefer exporting preprocessing *inside* the SavedModel
-signature, or a shared transform graph.
-
-A second trap: one process, one model file, no versions. You cannot
-canary, you cannot roll back, and a bad export is an outage.
-
-### 2019 GCP AI Platform (prediction)
-
-The book also shows a **managed** prediction service on then-current
-Google Cloud AI Platform: upload the SavedModel, get an HTTPS endpoint,
-let the cloud own replicas. Same artifact, rented ops.
-
-That product line was renamed and folded toward **Vertex AI**. The
-pattern remains: managed serving of *your* graph. Details in **What
-aged**.
-
-Saying "we use GCP" does not mean you deployed this chapter. Calling
-a frontier chat model through an adapter is a different job. Hosting a
-SavedModel on Vertex endpoints is this chapter's grandchild.
-
-## Mobile and embedded (TF Lite / TF.js era names)
-
-The server has a GPU and a network. The user has a phone, a browser,
-or a microcontroller. You cannot round-trip every frame, or you must
-not send the pixels off-device.
-
-Convert the SavedModel to a **smaller, stricter runtime**:
-
-- **TensorFlow Lite** (2019 name): flatten the graph, quantize
-  (float32 → float16 / int8), prune ops the mobile interpreter does
-  not have. Inference on CPU/GPU/NPU of the device.
-- **TensorFlow.js**: run in the browser or Node, WebGL/WASM backends
-  of that era. Weights ship to the client; privacy and latency change
-  shape.
-
-This is still **your** net, shrunk. It is a language model in the
-browser only if you actually converted one (you probably did not, in
-this book's examples).
-
-Converting without a device-side metric can drop a class you care
-about. Always re-evaluate on a hold-out *after* conversion, not only
-on the GPU trainer. Shipping an unquantized 200 MB conv net and
-blaming TF Lite also misses the point: the converter is not a magic
-compressor; you chose the architecture earlier.
-
-Edge also means **fixed input sizes, fewer ops, no Python**. Custom
-layers that do not convert are a brick wall. Prefer stock ops if
-mobile is a real requirement.
-
-## Using GPUs to speed up training
-
-Dense linear algebra on a CPU is how you wait. Conv nets,
-Transformers, GAN training want a device that multiplies matrices in
-parallel.
-
-Put the hot kernels on a GPU. Three common ways to *get* one in this
-edition's world:
-
-- **Your own card.** Driver, CUDA/cuDNN matching the TF wheel, heat,
-  and a machine you maintain. Best iteration loop if it works.
-- **A GPU VM in the cloud.** Rent hours. Watch idle time; the meter
-  does not care that you are debugging a shape error.
-- **Colaboratory-class hosted notebooks.** A free or cheap GPU with
-  session limits. Fine for this book's exercises. Not a training
-  cluster.
-
-### GPU RAM
-
-The scarce resource is often **device memory**, not FLOPs. A batch that
-fits in host RAM will OOM the card. You manage that by:
-
-- shrinking batch size (and often adjusting learning rate / batch-norm
-  behaviour),
-- mixed precision (later than some 2019 defaults, now table stakes),
-- telling TF whether to **pre-allocate all GPU RAM** or grow as needed
-  (the 2019 knobs: allow-growth vs a fraction of the card).
-
-Two Python processes on one GPU, both trying to grab the full card:
-one dies, or both thrash. If you share a box, cap memory per process
-or use one process.
-
-### Placing ops and variables
-
-TF can pin a variable or an op to `/GPU:0` or `/CPU:0`. Data
-preprocessing often stays on CPU; matmuls go to GPU. The book wants
-you to know **placement is a choice**, not magic: put a huge embedding
-table on GPU without thinking and you have spent the card before the
-first conv.
-
-Forcing every op onto GPU including things that are slower there (some
-string work, some small sequential work) wastes the device. Profile
-once instead of guessing. Host↔device copies in a tight loop will also
-eat the win: feed the GPU in batches, prefetch.
-
-### Parallel devices
-
-Two GPUs are not "twice as fast" unless you have a strategy for
-**what each one holds**. That is the next section. A single stream of
-tiny ops will not fill one GPU, let alone four. Increase batch size
-until you are memory-bound or throughput plateaus, then talk about
-distribution.
-
-## Training across multiple devices
-
-Two different ways to cut the net. Mixing their names is how a cluster
-job does nothing twice.
-
-```
-  MODEL PARALLELISM                 DATA PARALLELISM
-  (split the *graph*)               (split the *batch*)
-
-  GPU0: layers 1-10                 GPU0: batch slice 0  \  same weights
-  GPU1: layers 11-20                GPU1: batch slice 1  /  gradients merge
-        pipeline bubbles                  allreduce or parameter server
-```
-
-### Model parallelism vs data parallelism
-
-**Model parallelism** — different layers (or different heads, or
-tensor shards) live on different devices. You need it when **one**
-replica does not fit in GPU RAM (giant embeddings, giant Transformers).
-You pay pipeline bubbles, cross-device traffic, and a harder debugger.
-
-**Data parallelism** — every device has a replica of the whole model.
-Each step, each device sees a different minibatch, computes
-gradients, then **aggregates** (average) so replicas stay in sync.
-This is the default win when the model **does** fit.
-
-Splitting layers across GPUs because you have two cards and a small
-CNN is usually wrong: you wanted data parallelism. Model parallelism
-on a small graph is extra latency. The other trap: data parallelism
-with a batch so small per GPU that batch-norm statistics are noise
-and you "distributed" your way into worse accuracy.
-
-### Distribution strategies
-
-TF 2's answer in this edition is **`tf.distribute.Strategy`**: write
-the model once, wrap the training loop (or `model.fit`) in a strategy
-scope so variables and gradients land correctly.
-
-Mental catalog, 2019 names:
-
-- **MirroredStrategy.** One machine, several GPUs, all-reduce, replica
-  variables mirrored. The first thing to try on a multi-GPU box.
-- **MultiWorkerMirrored.** Several machines, still synchronous
-  all-reduce. Now you have networking, clocks, and a worker that can
-  die.
-- **Parameter-server strategy.** Some tasks hold variables, workers
-  compute gradients (async or sync depending on setup). Classic
-  cluster shape; stale gradients if async.
-- **TPUStrategy.** Same idea, TPU mesh instead of GPUs. Step structure
-  is stricter (static shapes help).
-
-The API details moved (see **What aged**). The split — **mirror the
-whole net vs shard it vs parameter servers** — did not.
-
-### TensorFlow clusters
-
-A **cluster spec** is a JSON-ish map of jobs (`worker`, `ps`,
-sometimes `chief`) to `host:port` lists. Each process is a **task**
-with a type and an index. They rendezvous, then run the distributed
-graph.
-
-Firewalls, mismatched TF versions, and a chief that starts before
-workers and deadlocks are how distributed TF fails as *distributed
-systems* fail. Log rank, hostname, and "did N workers join?" before
-you debug the loss. Forgetting that **learning rate and effective
-batch size** scaled with the number of replicas, then declaring the
-algorithm broken, is another classic.
-
-### Large jobs on the cloud
-
-When the box on your desk is not enough, you submit a **training job**
-to a cloud AI platform of 2019: a container or a package, a GPU/TPU
-machine type, a bucket for data and checkpoints, logs you read in a
-browser. The chapter's point is not the click-path. It is: **training
-at scale is a job scheduler plus artifacts in object storage**, not a
-longer Colab session.
-
-No checkpointing means preemptible / spot machines will kill you. No
-data locality — streaming millions of tiny files from a bucket into
-one worker — is how you train the network of your cloud bill. Use
-TFRecords / sharded files.
-
-### Black-box hyperparameter tuning on AI Platform
-
-Grid search does not love a fleet of GPU jobs. Managed **black-box /
-Bayesian-class** tuning (the book's AI Platform hyperparameter
-service) treats each training run as a trial: you expose a metric, the
-service proposes the next learning rate / depth / dropout.
-
-Tuning on the test set, or tuning 40 knobs with 15 trials, wastes the
-service. It is not a substitute for a validation split or for
-thinking. Also: this is **experimentation on training metrics**, not
-live A/B of a chat feature. Different loop.
-
-## What aged since 2019
-
-- **AI Platform → Vertex AI.** Same cloud, new product name, broader
-  surface (pipelines, feature store, endpoints). When you read the
-  book, mentally substitute Vertex for "AI Platform" and then check
-  today's docs; click-paths in a 2019 chapter are fossils.
-- **Keras 3.** Keras can run on TensorFlow, JAX, or PyTorch backends.
-  The *ideas* in Part II (layers, `fit`, callbacks) survived. A TF-only
-  custom training loop may not be the 2026 default.
-- **Research often prefers PyTorch or JAX.** That does not make TF
-  Serving a museum piece. If your org's production graph is TF, Serving
-  (or TorchServe, or NVIDIA Triton, or a Vertex/SageMaker endpoint)
-  is still the right *pattern*: freeze an artifact, version it, score
-  tensors.
-- **TF Serving is still a real pattern for in-house graphs.** gRPC,
-  model versions, batching, a dedicated binary — teams reinvent this
-  poorly in FastAPI every year. Use a serving stack. Wrapping chat JSON
-  around it does not change what you are serving.
-- **Lite runtime names moved** (TF Lite continued; mobile runtimes
-  keep being rebranded). Quantization and on-device eval did not
-  expire. TF.js still exists; WebGPU joined the backend list.
-- **Colab still exists**; so do Kaggle notebooks, GPU VMs, and
-  reserved clusters. Session limits are still how students lose
-  checkpoints. Save to a bucket.
-- **Distribution.** `tf.distribute` evolved; JAX `pmap`/`pjit` and
-  PyTorch DDP/FSDP are the papers you will actually read for giant
-  language models. Data vs model vs pipeline parallelism is the
-  transferable vocabulary.
-- **Vendor endpoints** made "deploy" mean "call an API" for many NLP
-  apps. Those apps still do not replace a fraud model you trained on
-  *your* table and must serve at 5 ms.
-
-## Check yourself
-
-1. You have a Keras classifier and a chatbot that calls a provider
-   API. Which one belongs on TF Serving? Name the artifact each
-   ships.
-2. Why is a SavedModel more than "the `.h5` file in my home
-   directory"? What breaks if the client preprocesses differently
-   from training?
-3. Managed AI Platform / Vertex endpoints vs TF Serving on your VMs:
-   what do you gain, and what do you still have to get right about
-   versions and signatures?
-4. Quantize to int8, skip the hold-out eval, ship to phones. What
-   failure did you choose? Which metric would have caught it?
-5. Two processes, one GPU, default memory growth off. What happens,
-   and which knob exists so they can coexist?
-6. You have two GPUs and a 5 M parameter CNN that already fits on
-   one. Model or data parallelism? Why would the other one be a
-   waste?
-7. MirroredStrategy vs a parameter-server cluster: which one is
-   "one box, synchronous replicas," and what new failure appears
-   when you add machines?
-8. Effective batch size grew 8× with 8 replicas. What else might
-   you scale, and what metric tells you the run is now
-   communication-bound rather than compute-bound?
-9. Black-box HP tuning on the cloud vs grid search in sklearn: what
-   is the unit of a "trial" here, and what goes wrong if you tune
-   on the test set?
-10. A teammate says "we deployed the model" after wrapping a chat
-    loop in Docker. What SavedModel question would you ask to find
-    out whether they did *this* chapter's job?
+#### **6. Clusters, cloud training jobs, and tuning**
+* **Multi-worker training**: **TF_CONFIG** defines worker/chief/ps/evaluator roles; **MultiWorkerMirroredStrategy** and **ParameterServerStrategy** extend mirroring or async ps setups across machines.
+* **AI Platform jobs**: `gcloud ai-platform jobs submit training` provisions a **TF cluster** from packaged trainer code; data on GCS feeds `tf.data` pipelines via `tf.io.gfile`.
+* **Hyperparameter search**: **Google Vizier** (Bayesian optimization) reads **TensorBoard accuracy** logs from trial output directories to steer parallel training trials efficiently.
